@@ -7,10 +7,12 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "postinstall": "node scripts/patch-piper.js"
   },
   "dependencies": {
     "@ant-design/icons": "^6.3.4",
+    "@mintplex-labs/piper-tts-web": "^1.0.5",
     "antd": "^6.6.6",
     "dayjs": "^1.11.23",
     "dexie": "^4.4.6",

@@ -8,6 +8,7 @@ import {
   AppleOutlined,
   BookOutlined,
   UploadOutlined,
+  CustomerServiceOutlined,
 } from '@ant-design/icons';
 import { useSettingsStore } from '../store/useSettingsStore';
 import type { SleepTimerState } from '../types';
@@ -19,6 +20,7 @@ interface NavbarProps {
   onBackToShelf?: () => void;
   onOpenTimerModal: () => void;
   onOpenIOSGuide: () => void;
+  onOpenVoiceModal?: () => void;
   onOpenUpload?: () => void;
   sleepTimer: SleepTimerState;
 }
@@ -28,6 +30,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onBackToShelf,
   onOpenTimerModal,
   onOpenIOSGuide,
+  onOpenVoiceModal,
   onOpenUpload,
   sleepTimer,
 }) => {
@@ -167,6 +170,17 @@ export const Navbar: React.FC<NavbarProps> = ({
             style={{ fontSize: 16 }}
           />
         </Tooltip>
+
+        {onOpenVoiceModal && (
+          <Tooltip title="Chọn & Nghe thử giọng đọc">
+            <Button
+              type="text"
+              icon={<CustomerServiceOutlined style={{ color: '#1677ff' }} />}
+              onClick={onOpenVoiceModal}
+              style={{ fontSize: 16 }}
+            />
+          </Tooltip>
+        )}
 
         <Dropdown menu={{ items: themeMenuItems }} placement="bottomRight" trigger={['click']}>
           <Tooltip title="Chế độ màu">

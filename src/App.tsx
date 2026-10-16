@@ -10,6 +10,8 @@ import { ReaderView, type ChapterControls } from './components/ReaderView';
 import { PlayerBar } from './components/PlayerBar';
 import { SleepTimerModal } from './components/SleepTimerModal';
 import { IOSGuideModal } from './components/iOSGuideModal';
+import { VoiceModal } from './components/VoiceModal';
+import { VoiceDrawer } from './components/VoiceDrawer';
 
 export const App: React.FC = () => {
   const { theme } = useSettingsStore();
@@ -19,6 +21,16 @@ export const App: React.FC = () => {
   const [isTimerModalOpen, setIsTimerModalOpen] = useState<boolean>(false);
   const [isIOSGuideOpen, setIsIOSGuideOpen] = useState<boolean>(false);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState<boolean>(false);
+  const [isVoiceModalOpen, setIsVoiceModalOpen] = useState<boolean>(false);
+  const [isVoiceDrawerOpen, setIsVoiceDrawerOpen] = useState<boolean>(false);
+
+  const handleOpenVoiceSettings = useCallback(() => {
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      setIsVoiceDrawerOpen(true);
+    } else {
+      setIsVoiceModalOpen(true);
+    }
+  }, []);
 
   // References to chapter controls for auto next chapter transition
   const chapterControlsRef = useRef<ChapterControls | null>(null);
@@ -50,8 +62,11 @@ export const App: React.FC = () => {
     setSentencesList,
     startSleepTimer,
     cancelSleepTimer,
+    previewVoice,
   } = useTTS({
     onChapterComplete: handleChapterComplete,
+    bookTitle: currentBook?.title,
+    bookCoverUrl: currentBook?.coverUrl,
   });
 
   // Load books from IndexedDB
@@ -153,6 +168,7 @@ export const App: React.FC = () => {
             onBackToShelf={currentBook ? handleBackToShelf : undefined}
             onOpenTimerModal={() => setIsTimerModalOpen(true)}
             onOpenIOSGuide={() => setIsIOSGuideOpen(true)}
+            onOpenVoiceModal={handleOpenVoiceSettings}
             onOpenUpload={currentBook ? undefined : () => setIsUploadModalOpen(true)}
             sleepTimer={sleepTimer}
           />
@@ -202,6 +218,8 @@ export const App: React.FC = () => {
               totalSentences={sentences.length}
               voices={voices}
               vietnameseVoices={vietnameseVoices}
+              onOpenVoiceModal={() => setIsVoiceModalOpen(true)}
+              onOpenVoiceDrawer={() => setIsVoiceDrawerOpen(true)}
             />
           )}
 
@@ -218,6 +236,24 @@ export const App: React.FC = () => {
           <IOSGuideModal
             open={isIOSGuideOpen}
             onClose={() => setIsIOSGuideOpen(false)}
+          />
+
+          {/* Vietnamese & International Voice Settings Modal (Desktop) */}
+          <VoiceModal
+            open={isVoiceModalOpen}
+            onClose={() => setIsVoiceModalOpen(false)}
+            voices={voices}
+            vietnameseVoices={vietnameseVoices}
+            onPreviewVoice={previewVoice}
+          />
+
+          {/* Mobile Bottom Sheet Voice Drawer */}
+          <VoiceDrawer
+            open={isVoiceDrawerOpen}
+            onClose={() => setIsVoiceDrawerOpen(false)}
+            voices={voices}
+            vietnameseVoices={vietnameseVoices}
+            onPreviewVoice={previewVoice}
           />
         </div>
       </AntdApp>
