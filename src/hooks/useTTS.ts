@@ -57,6 +57,11 @@ export function useTTS(onSentenceChange?: (index: number, sentence: string) => v
   const isPlayingRef = useRef<boolean>(false);
   const currentSentenceIndexRef = useRef<number>(0);
   const sentencesRef = useRef<string[]>([]);
+  // Fix ISSUE-03: Pin active utterance to prevent Garbage Collection freezing speech on iOS
+  const activeUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  // Fix ISSUE-09: Use ref for sleepTimer to eliminate re-render storms
+  const sleepTimerRef = useRef<SleepTimerState>(sleepTimer);
+  const speakCurrentSentenceRef = useRef<() => void>(() => {});
 
   // Detect iOS Safari
   const isIOS =
@@ -72,6 +77,10 @@ export function useTTS(onSentenceChange?: (index: number, sentence: string) => v
   useEffect(() => {
     sentencesRef.current = sentences;
   }, [sentences]);
+
+  useEffect(() => {
+    sleepTimerRef.current = sleepTimer;
+  }, [sleepTimer]);
 
   // 1. Initialize voices with fallback polling for iOS Safari
   useEffect(() => {
@@ -182,7 +191,7 @@ export function useTTS(onSentenceChange?: (index: number, sentence: string) => v
       // Empty sentence, move to next
       currentSentenceIndexRef.current = idx + 1;
       setCurrentSentenceIndex(idx + 1);
-      speakCurrentSentence();
+      speakCurrentSentenceRef.current();
       return;
     }
 
@@ -190,13 +199,18 @@ export function useTTS(onSentenceChange?: (index: number, sentence: string) => v
     synth.cancel();
 
     const utterance = new SpeechSynthesisUtterance(textToSpeak);
+    // Pin to global references to defeat WebKit Garbage Collector
+    activeUtteranceRef.current = utterance;
+    (window as any).__activeUtterance = utterance;
+
     utterance.rate = speechRate;
     utterance.pitch = speechPitch;
 
-    // Calculate volume factoring in Sleep Timer fade-out
+    // Calculate volume factoring in Sleep Timer fade-out without re-render loop
+    const currentTimer = sleepTimerRef.current;
     let effectiveVolume = volume;
-    if (sleepTimer.isActive && sleepTimer.fadeAudio && sleepTimer.remainingSeconds <= 30) {
-      effectiveVolume = volume * Math.max(0, sleepTimer.remainingSeconds / 30);
+    if (currentTimer.isActive && currentTimer.fadeAudio && currentTimer.remainingSeconds <= 30) {
+      effectiveVolume = volume * Math.max(0, currentTimer.remainingSeconds / 30);
     }
     utterance.volume = effectiveVolume;
 
@@ -212,17 +226,28 @@ export function useTTS(onSentenceChange?: (index: number, sentence: string) => v
         onSentenceChange(idx, textToSpeak);
       }
 
-      // Update MediaSession for iOS Control Center & lock screen
+      // Fix ISSUE-08: Update MediaSession metadata for iOS Lock Screen & Dynamic Island
       if ('mediaSession' in navigator) {
         navigator.mediaSession.playbackState = 'playing';
+        try {
+          navigator.mediaSession.metadata = new window.MediaMetadata({
+            title: textToSpeak.length > 60 ? `${textToSpeak.slice(0, 60)}...` : textToSpeak,
+            artist: selectedVoice?.name || 'AudioEpub Reader',
+            album: 'Sách nói EPUB Tiếng Việt',
+          });
+        } catch (e) {}
       }
     };
 
     utterance.onend = () => {
+      activeUtteranceRef.current = null;
+      (window as any).__activeUtterance = null;
+
       if (!isPlayingRef.current) return;
 
       // Check if Sleep Timer mode is 'chapter' and this is the last sentence
-      if (sleepTimer.isActive && sleepTimer.targetMode === 'chapter' && idx >= list.length - 1) {
+      const timerState = sleepTimerRef.current;
+      if (timerState.isActive && timerState.targetMode === 'chapter' && idx >= list.length - 1) {
         setPlaybackState('idle');
         isPlayingRef.current = false;
         synth.cancel();
@@ -234,17 +259,20 @@ export function useTTS(onSentenceChange?: (index: number, sentence: string) => v
       const nextIdx = idx + 1;
       currentSentenceIndexRef.current = nextIdx;
       setCurrentSentenceIndex(nextIdx);
-      speakCurrentSentence();
+      speakCurrentSentenceRef.current();
     };
 
     utterance.onerror = (event) => {
+      activeUtteranceRef.current = null;
+      (window as any).__activeUtterance = null;
+
       console.warn('SpeechSynthesis error:', event);
       if (event.error !== 'interrupted' && event.error !== 'canceled') {
         // Retry next sentence on error
         const nextIdx = idx + 1;
         currentSentenceIndexRef.current = nextIdx;
         setCurrentSentenceIndex(nextIdx);
-        speakCurrentSentence();
+        speakCurrentSentenceRef.current();
       }
     };
 
@@ -255,11 +283,14 @@ export function useTTS(onSentenceChange?: (index: number, sentence: string) => v
     speechPitch,
     volume,
     selectedVoice,
-    sleepTimer,
     onSentenceChange,
     startKeepAlive,
     stopKeepAlive,
   ]);
+
+  useEffect(() => {
+    speakCurrentSentenceRef.current = speakCurrentSentence;
+  }, [speakCurrentSentence]);
 
   // 5. Controls: Play, Pause, Resume, Stop
   const play = useCallback(

@@ -253,21 +253,27 @@ export const BookShelf: React.FC<BookShelfProps> = ({
                       Đọc / Nghe
                     </Button>
 
-                    <Popconfirm
-                      title="Xóa sách khỏi thiết bị?"
-                      description="Hành động này sẽ xóa dữ liệu sách khỏi trình duyệt."
-                      onConfirm={() => handleDeleteBook(book.id)}
-                      okText="Xóa"
-                      cancelText="Hủy"
-                      okButtonProps={{ danger: true }}
-                    >
-                      <Button
-                        type="text"
-                        size="small"
-                        danger
-                        icon={<DeleteOutlined />}
-                      />
-                    </Popconfirm>
+                    <div onClick={(e) => e.stopPropagation()}>
+                      <Popconfirm
+                        title="Xóa sách khỏi thiết bị?"
+                        description="Hành động này sẽ xóa dữ liệu sách khỏi trình duyệt."
+                        onConfirm={(e) => {
+                          e?.stopPropagation();
+                          handleDeleteBook(book.id);
+                        }}
+                        okText="Xóa"
+                        cancelText="Hủy"
+                        okButtonProps={{ danger: true }}
+                      >
+                        <Button
+                          type="text"
+                          size="small"
+                          danger
+                          icon={<DeleteOutlined />}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </Popconfirm>
+                    </div>
                   </div>
                 </div>
               </Card>

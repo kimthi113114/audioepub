@@ -34,6 +34,7 @@ export const App: React.FC = () => {
     stop,
     nextSentence,
     prevSentence,
+    jumpToSentence,
     setSentencesList,
     startSleepTimer,
     cancelSleepTimer,
@@ -138,12 +139,22 @@ export const App: React.FC = () => {
         />
 
         {/* Content View: Shelf or Reader */}
-        <main style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+        <main
+          style={{
+            flex: 1,
+            minHeight: 0,
+            position: 'relative',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+          }}
+        >
           {currentBook ? (
             <ReaderView
               book={currentBook}
               currentSentenceIndex={currentSentenceIndex}
               onSentencesReady={handleSentencesReady}
+              onSentenceClick={jumpToSentence}
             />
           ) : (
             <BookShelf

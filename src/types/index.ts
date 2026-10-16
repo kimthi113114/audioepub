@@ -6,6 +6,7 @@ export interface Book {
   fileBlob: Blob;
   fileSize: number;
   totalChapters?: number;
+  locationsData?: string; // Cached EPUB locations CFI for 0ms loading
   currentCfi?: string;
   currentChapterIndex?: number;
   progressPercent: number;

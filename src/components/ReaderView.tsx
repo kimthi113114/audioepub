@@ -19,6 +19,7 @@ interface ReaderViewProps {
   currentSentenceIndex: number;
   onSentencesReady: (sentences: string[]) => void;
   onChapterChanged?: (title: string) => void;
+  onSentenceClick?: (index: number) => void;
 }
 
 export const ReaderView: React.FC<ReaderViewProps> = ({
@@ -26,8 +27,10 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   currentSentenceIndex,
   onSentencesReady,
   onChapterChanged,
+  onSentenceClick,
 }) => {
-  const { theme, fontSize, lineHeight, fontFamily, readingMode } = useSettingsStore();
+  const { theme, fontSize, lineHeight, fontFamily, readingMode, autoScroll, highlightSentence } =
+    useSettingsStore();
 
   const viewerRef = useRef<HTMLDivElement>(null);
   const epubBookRef = useRef<EpubBook | null>(null);
@@ -72,10 +75,21 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           setChapters(flatToc(nav.toc));
         }
 
-        // Generate locations for progress tracking
-        epubBook.locations.generate(1024).then(() => {
-          console.log('Book locations generated');
-        });
+        // Fix ISSUE-07: Load cached locations or generate and save to IndexedDB
+        if (book.locationsData) {
+          try {
+            epubBook.locations.load(book.locationsData);
+          } catch (e) {
+            console.warn('Locations load error:', e);
+          }
+        } else {
+          epubBook.locations.generate(1024).then(() => {
+            const saved = epubBook?.locations.save();
+            if (book.id && saved) {
+              db.books.update(book.id, { locationsData: saved });
+            }
+          });
+        }
 
         // Initialize Rendition
         const container = viewerRef.current;
@@ -93,7 +107,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         });
         renditionRef.current = rendition;
 
-        // Register themes
+        // Fix ISSUE-02: Register themes with .tts-active-sentence inside iframe
         rendition.themes.register('light', {
           body: {
             background: '#ffffff',
@@ -102,6 +116,15 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             'font-size': `${fontSize}px`,
             'line-height': `${lineHeight}`,
             padding: '20px 24px 80px',
+          },
+          '.tts-active-sentence': {
+            'background-color': 'rgba(250, 204, 21, 0.45) !important',
+            'border-radius': '4px',
+            'box-shadow': '0 0 0 2px rgba(250, 204, 21, 0.45) !important',
+            transition: 'background-color 0.25s ease',
+          },
+          '.tts-sentence': {
+            cursor: 'pointer',
           },
         });
 
@@ -114,6 +137,15 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             'line-height': `${lineHeight}`,
             padding: '20px 24px 80px',
           },
+          '.tts-active-sentence': {
+            'background-color': 'rgba(217, 119, 6, 0.35) !important',
+            'border-radius': '4px',
+            'box-shadow': '0 0 0 2px rgba(217, 119, 6, 0.35) !important',
+            transition: 'background-color 0.25s ease',
+          },
+          '.tts-sentence': {
+            cursor: 'pointer',
+          },
         });
 
         rendition.themes.register('dark', {
@@ -124,6 +156,16 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             'font-size': `${fontSize}px`,
             'line-height': `${lineHeight}`,
             padding: '20px 24px 80px',
+          },
+          '.tts-active-sentence': {
+            'background-color': 'rgba(234, 179, 8, 0.35) !important',
+            'box-shadow': '0 0 0 2px rgba(234, 179, 8, 0.35) !important',
+            color: '#fef08a !important',
+            'border-radius': '4px',
+            transition: 'background-color 0.25s ease',
+          },
+          '.tts-sentence': {
+            cursor: 'pointer',
           },
         });
 
@@ -136,15 +178,11 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         rendition.on('rendered', (section: any, view: any) => {
           if (!view || !view.document) return;
 
-          // Extract text and split sentences for TTS
+          // Fix ISSUE-01: Tag individual sentences inside DOM to match 1:1 with TTS
           const doc = view.document;
-          const bodyText = doc.body.innerText || '';
-          const sentences = splitTextIntoSentences(bodyText);
+          const extractedSentences = tagAndExtractSentences(doc);
 
-          // Tag text nodes / sentences for highlight
-          tagSentencesInDoc(doc);
-
-          onSentencesReady(sentences);
+          onSentencesReady(extractedSentences);
 
           // Get chapter title
           const matchedChapter = nav?.toc?.find((c: any) => c.href.includes(section?.href));
@@ -196,27 +234,53 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     };
   }, [book, readingMode]);
 
-  // 2. Wrap text nodes into spans for sentence highlighting
-  const tagSentencesInDoc = (doc: Document) => {
+  // Fix ISSUE-01: Tag individual sentences inside DOM and return exact sentence array
+  const tagAndExtractSentences = (doc: Document): string[] => {
     currentSentenceElementsRef.current = [];
+    const elements: HTMLElement[] = [];
+    const allSentences: string[] = [];
 
-    // Store references for fast highlighting
-    const spans: HTMLElement[] = [];
-    const paragraphs = doc.querySelectorAll('p, div, li, h1, h2, h3, h4, h5, h6');
+    // Target content block elements
+    const blocks = doc.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, blockquote');
 
-    paragraphs.forEach((p, pIndex) => {
-      const text = p.textContent || '';
-      if (!text.trim()) return;
+    blocks.forEach((block) => {
+      // Avoid processing containers that contain other blocks
+      if (block.querySelector('p, h1, h2, h3, h4, h5, h6, li, blockquote')) return;
 
-      // Wrap whole paragraph or inner parts
-      (p as HTMLElement).dataset.ttsIndex = `${pIndex}`;
-      spans.push(p as HTMLElement);
+      const rawText = block.textContent || '';
+      if (!rawText.trim()) return;
+
+      const sentences = splitTextIntoSentences(rawText);
+      if (sentences.length === 0) return;
+
+      // Clear block and rebuild with interactive sentence spans
+      block.innerHTML = '';
+      sentences.forEach((sentenceText) => {
+        const span = doc.createElement('span');
+        const sentenceIndex = allSentences.length;
+        span.className = 'tts-sentence';
+        span.dataset.ttsIdx = `${sentenceIndex}`;
+        span.textContent = `${sentenceText} `;
+
+        // Click-to-Speak handler
+        span.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (onSentenceClick) {
+            onSentenceClick(sentenceIndex);
+          }
+        });
+
+        block.appendChild(span);
+        elements.push(span);
+        allSentences.push(sentenceText);
+      });
     });
 
-    currentSentenceElementsRef.current = spans;
+    currentSentenceElementsRef.current = elements;
+    return allSentences;
   };
 
-  // 3. Highlight active sentence & auto-scroll
+  // 3. Highlight active sentence & auto-scroll (Fix ISSUE-10: respects settings)
   useEffect(() => {
     const rendition = renditionRef.current;
     if (!rendition) return;
@@ -230,19 +294,23 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       el.classList.remove('tts-active-sentence');
     });
 
-    // Find and highlight matching paragraph/element
+    // Find and highlight matching sentence span
     const elements = currentSentenceElementsRef.current;
     if (elements && elements[currentSentenceIndex]) {
       const target = elements[currentSentenceIndex];
-      target.classList.add('tts-active-sentence');
 
-      // Auto scroll target into view
-      target.scrollIntoView({
-        behavior: 'smooth',
-        block: 'center',
-      });
+      if (highlightSentence) {
+        target.classList.add('tts-active-sentence');
+      }
+
+      if (autoScroll) {
+        target.scrollIntoView({
+          behavior: 'smooth',
+          block: 'center',
+        });
+      }
     }
-  }, [currentSentenceIndex]);
+  }, [currentSentenceIndex, autoScroll, highlightSentence]);
 
   // 4. Update font size, theme, line height dynamically
   useEffect(() => {
@@ -253,7 +321,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     rendition.themes.fontSize(`${fontSize}px`);
   }, [theme, fontSize, lineHeight, fontFamily]);
 
-  // 5. Navigate to Chapter
+  // 5. Navigation to Chapter
   const handleSelectChapter = (href: string) => {
     if (renditionRef.current) {
       renditionRef.current.display(href);
@@ -274,11 +342,13 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   };
 
   return (
+    // Fix ISSUE-05: Flexible container height adapting to Safe Area and Dynamic Viewport
     <div
       style={{
         position: 'relative',
         width: '100%',
-        height: 'calc(100dvh - 56px - 72px)',
+        height: '100%',
+        flex: 1,
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
@@ -293,6 +363,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           padding: '6px 16px',
           background: 'rgba(0,0,0,0.02)',
           borderBottom: '1px solid rgba(0,0,0,0.05)',
+          flexShrink: 0,
         }}
       >
         <Space size={8}>
@@ -340,6 +411,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           width: '100%',
           height: '100%',
           position: 'relative',
+          paddingBottom: 80, // Prevent last sentences from being obscured by PlayerBar
         }}
       />
 
