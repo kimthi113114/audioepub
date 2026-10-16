@@ -26,6 +26,22 @@ if (fs.existsSync(targetFile)) {
     changed = true;
   }
 
+  // 3. Patch ONNX_BASE to local /onnx/ to eliminate 404 from cdnjs
+  if (content.includes('const ONNX_BASE = "https://cdnjs.cloudflare.com/ajax/libs/onnxruntime-web/1.18.0/";')) {
+    content = content.replace('const ONNX_BASE = "https://cdnjs.cloudflare.com/ajax/libs/onnxruntime-web/1.18.0/";', 'const ONNX_BASE = "/onnx/";');
+    changed = true;
+  }
+
+  // 4. Safely clamp out-of-bounds phoneme IDs to prevent Gather node crash (idx >= num_symbols)
+  if (content.includes('input: new (__privateGet(this, _ort)).Tensor("int64", phonemeIds, [1, phonemeIds.length])')) {
+    content = content.replace(
+      'input: new (__privateGet(this, _ort)).Tensor("int64", phonemeIds, [1, phonemeIds.length])',
+      `input: new (__privateGet(this, _ort)).Tensor("int64", phonemeIds.map(id => (id >= 0 && id < ((__privateGet(this, _modelConfig) && __privateGet(this, _modelConfig).num_symbols) || 130)) ? id : 0), [1, phonemeIds.length])`
+    );
+    changed = true;
+  }
+
+
   if (changed) {
     fs.writeFileSync(targetFile, content, 'utf8');
     console.log('[patch-piper] Successfully patched @mintplex-labs/piper-tts-web for multi-speaker support.');

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { message } from 'antd';
 import { useSettingsStore } from '../store/useSettingsStore';
 import type { PlaybackState, SleepTimerState, VivosVoice } from '../types';
 import {
@@ -125,8 +126,11 @@ export function useTTS(
   const keepAliveIntervalRef = useRef<number | null>(null);
   const silentAudioRef = useRef<HTMLAudioElement | null>(null);
   const neuralAudioRef = useRef<HTMLAudioElement | null>(null);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const previewUrlRef = useRef<string | null>(null);
   const lookaheadQueueRef = useRef<LookaheadQueue>(new LookaheadQueue());
   const currentBlobUrlRef = useRef<string | null>(null);
+
 
   const isPlayingRef = useRef<boolean>(false);
   const currentSentenceIndexRef = useRef<number>(0);
@@ -811,63 +815,142 @@ export function useTTS(
       voiceURI: string,
       sampleText: string = 'Xin chào, đây là giọng đọc tiếng Việt thử nghiệm trên AudioEpub.'
     ) => {
+      // 0. Ensure persistent preview <audio> element exists & prime it in synchronous click context
+      if (!previewAudioRef.current && typeof document !== 'undefined') {
+        const el = document.createElement('audio');
+        el.id = 'audioepub-preview-player';
+        el.setAttribute('playsinline', 'true');
+        (el as any).playsInline = true;
+        document.body.appendChild(el);
+        previewAudioRef.current = el;
+      }
+      const pAudio = previewAudioRef.current;
+      if (pAudio) {
+        try {
+          pAudio.pause();
+        } catch {}
+      }
+
+      // Helper function for Web Speech preview with robust cancellation delay and gender matching
+      const playWebSpeechPreview = (
+        targetVoiceURI: string,
+        gender: 'female' | 'male' = 'female',
+        pitchMod: number = 1.0,
+        isFallbackMsg?: string
+      ) => {
+        if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+        const synth = window.speechSynthesis;
+        synth.cancel();
+
+        const currentVoices = synth.getVoices();
+        const availableVoices = currentVoices.length > 0 ? currentVoices : voices;
+        let targetVoice = availableVoices.find((v) => v.voiceURI === targetVoiceURI);
+
+        if (!targetVoice) {
+          const viVoices = availableVoices.filter(
+            (v) => v.lang.toLowerCase().startsWith('vi') || v.name.toLowerCase().includes('vietnam')
+          );
+          if (gender === 'male' || pitchMod < 1.0) {
+            targetVoice = viVoices.find((v) => /nam|minh|male|man/i.test(v.name)) || viVoices[0];
+          } else {
+            targetVoice = viVoices.find((v) => /hoài|my|linh|an|female|woman/i.test(v.name)) || viVoices[0];
+          }
+        }
+        if (!targetVoice) {
+          targetVoice = availableVoices[0];
+        }
+
+        const utterance = new SpeechSynthesisUtterance(sampleText);
+        utterance.rate = speechRate;
+        utterance.pitch = Math.max(0.5, Math.min(2.0, speechPitch * pitchMod));
+        utterance.volume = volume;
+        utterance.lang = targetVoice?.lang || 'vi-VN';
+        if (targetVoice) {
+          utterance.voice = targetVoice;
+        }
+
+        activeUtteranceRef.current = utterance;
+        (window as any).__activeUtterance = utterance;
+
+        utterance.onend = () => {
+          activeUtteranceRef.current = null;
+          (window as any).__activeUtterance = null;
+        };
+        utterance.onerror = () => {
+          activeUtteranceRef.current = null;
+          (window as any).__activeUtterance = null;
+        };
+
+        if (isFallbackMsg) {
+          message.info(isFallbackMsg);
+        }
+
+        setTimeout(() => {
+          try {
+            synth.resume();
+            synth.speak(utterance);
+          } catch (e) {
+            console.error('[WebSpeech Preview] speak error:', e);
+          }
+        }, 70);
+      };
+
       // 1. Preview Neural Voice via Audio Blob
       if (voiceURI.startsWith('piper:')) {
         const speakerId = parseSpeakerIdFromURI(voiceURI);
+        const voiceInfo = getVoiceById(voiceURI);
+        const gender: 'female' | 'male' = voiceInfo?.gender || 'female';
+        const isFemale = gender === 'female';
         const ready = await checkModelReady();
-        if (!ready) {
-          console.warn('[Piper Preview] Model is not downloaded yet.');
-          return;
+
+        if (ready) {
+          try {
+            const blob = await synthesize(sampleText, speakerId);
+            if (previewUrlRef.current) {
+              URL.revokeObjectURL(previewUrlRef.current);
+              previewUrlRef.current = null;
+            }
+            const url = URL.createObjectURL(blob);
+            previewUrlRef.current = url;
+
+            if (pAudio) {
+              pAudio.src = url;
+              pAudio.playbackRate = speechRate;
+              pAudio.volume = volume;
+              pAudio.onended = () => {
+                if (previewUrlRef.current) {
+                  URL.revokeObjectURL(previewUrlRef.current);
+                  previewUrlRef.current = null;
+                }
+              };
+              pAudio.onerror = () => {
+                if (previewUrlRef.current) {
+                  URL.revokeObjectURL(previewUrlRef.current);
+                  previewUrlRef.current = null;
+                }
+              };
+              await pAudio.play();
+              return;
+            }
+          } catch (err) {
+            console.warn('[Piper Preview] Direct neural synthesis failed, using speech preview fallback:', err);
+          }
         }
 
-        try {
-          const blob = await synthesize(sampleText, speakerId);
-          const url = URL.createObjectURL(blob);
-          const preview = new Audio(url);
-          preview.setAttribute('playsinline', 'true');
-          (preview as any).playsInline = true;
-          preview.playbackRate = speechRate;
-          preview.volume = volume;
-          preview.onended = () => {
-            URL.revokeObjectURL(url);
-          };
-          preview.onerror = () => {
-            URL.revokeObjectURL(url);
-          };
-          await preview.play();
-        } catch (err) {
-          console.error('[Piper Preview] Error previewing voice:', err);
-        }
+        // Graceful preview when model is not yet downloaded or initializing
+        playWebSpeechPreview(
+          '',
+          gender,
+          isFemale ? 1.15 : 0.85,
+          !ready ? 'Đang phát giọng nghe thử. Vui lòng bấm "Tải Mô Hình AI (27.8MB)" để nghe giọng AI tự nhiên hoàn chỉnh!' : undefined
+        );
         return;
       }
 
       // 2. Preview System Web Speech Voice
-      if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-      const synth = window.speechSynthesis;
-      synth.cancel();
-
-      const targetVoice = voices.find((v) => v.voiceURI === voiceURI);
-      const utterance = new SpeechSynthesisUtterance(sampleText);
-      utterance.rate = speechRate;
-      utterance.pitch = speechPitch;
-      utterance.volume = volume;
-      if (targetVoice) {
-        utterance.voice = targetVoice;
-        utterance.lang = targetVoice.lang;
-      }
-      activeUtteranceRef.current = utterance;
-      (window as any).__activeUtterance = utterance;
-
-      utterance.onend = () => {
-        activeUtteranceRef.current = null;
-        (window as any).__activeUtterance = null;
-      };
-      utterance.onerror = () => {
-        activeUtteranceRef.current = null;
-        (window as any).__activeUtterance = null;
-      };
-
-      synth.speak(utterance);
+      const sysVoice = voices.find((v) => v.voiceURI === voiceURI);
+      const isMaleSys = sysVoice ? /nam|minh|male/i.test(sysVoice.name) : false;
+      playWebSpeechPreview(voiceURI, isMaleSys ? 'male' : 'female', 1.0);
     },
     [voices, speechRate, speechPitch, volume]
   );
