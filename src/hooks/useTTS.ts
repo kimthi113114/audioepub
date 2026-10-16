@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { message } from 'antd';
 import { useSettingsStore } from '../store/useSettingsStore';
 import type { PlaybackState, SleepTimerState, VivosVoice } from '../types';
@@ -179,11 +179,23 @@ export function useTTS(
 
         // Auto select Vietnamese voice if not set and engine is system
         if (!selectedVoiceURI) {
-          const vnVoice = availableVoices.find(
-            (v) => v.lang.includes('vi') || v.name.toLowerCase().includes('vietnam')
+          const vnVoices = availableVoices.filter(
+            (v) =>
+              v.lang.toLowerCase().startsWith('vi') ||
+              v.name.toLowerCase().includes('vietnam') ||
+              v.name.toLowerCase().includes('tiếng việt') ||
+              v.name.toLowerCase().includes('hoaimy') ||
+              v.name.toLowerCase().includes('hoài my') ||
+              v.name.toLowerCase().includes('namminh') ||
+              v.name.toLowerCase().includes('nam minh')
           );
-          if (vnVoice) {
-            setSelectedVoiceURI(vnVoice.voiceURI);
+          const naturalVoice =
+            vnVoices.find((v) =>
+              /online|natural|neural|hoài|hoaimy|namminh|nam minh/i.test(v.name)
+            ) || vnVoices[0];
+
+          if (naturalVoice) {
+            setSelectedVoiceURI(naturalVoice.voiceURI);
           }
         }
       }
@@ -202,16 +214,24 @@ export function useTTS(
     };
   }, [selectedVoiceURI, setSelectedVoiceURI]);
 
-  // Helper: List Vietnamese system voices
-  const vietnameseVoices = voices.filter(
-    (v) =>
-      v.lang.toLowerCase().startsWith('vi') ||
-      v.name.toLowerCase().includes('vietnam') ||
-      v.name.toLowerCase().includes('linh') ||
-      v.name.toLowerCase().includes('an') ||
-      v.name.toLowerCase().includes('hoaimy') ||
-      v.name.toLowerCase().includes('namminh')
-  );
+  // Helper: List Vietnamese system voices with Natural/Studio voices at top
+  const vietnameseVoices = useMemo(() => {
+    const list = voices.filter(
+      (v) =>
+        v.lang.toLowerCase().startsWith('vi') ||
+        v.name.toLowerCase().includes('vietnam') ||
+        v.name.toLowerCase().includes('tiếng việt') ||
+        v.name.toLowerCase().includes('hoaimy') ||
+        v.name.toLowerCase().includes('hoài my') ||
+        v.name.toLowerCase().includes('namminh') ||
+        v.name.toLowerCase().includes('nam minh')
+    );
+    return [...list].sort((a, b) => {
+      const aIsStudio = /online|natural|neural|hoài|hoaimy|namminh|nam minh|linh|\ban\b/i.test(a.name) ? 1 : 0;
+      const bIsStudio = /online|natural|neural|hoài|hoaimy|namminh|nam minh|linh|\ban\b/i.test(b.name) ? 1 : 0;
+      return bIsStudio - aIsStudio;
+    });
+  }, [voices]);
 
   const selectedVoice =
     voices.find((v) => v.voiceURI === selectedVoiceURI) ||
@@ -564,8 +584,9 @@ export function useTTS(
 
   // Unified Play Current Sentence Dispatcher
   const playCurrentSentence = useCallback(() => {
-    const isNeural =
-      (selectedVoiceURI.startsWith('piper:') || engineMode === 'neural') && isModelReady;
+    const isNeural = selectedVoiceURI.startsWith('piper:')
+      ? isModelReady
+      : engineMode === 'neural' && !selectedVoiceURI && isModelReady;
     const idx = currentSentenceIndexRef.current;
 
     if (isNeural) {

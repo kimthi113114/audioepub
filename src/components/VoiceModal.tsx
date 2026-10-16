@@ -63,11 +63,12 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
     setSelectedVoiceURI,
     setNeuralSpeakerId,
     setTtsEngine,
+    setEngineMode,
     neuralModelDownloaded,
     setNeuralModelDownloaded,
   } = useSettingsStore();
 
-  const [activeTab, setActiveTab] = useState<string>('neural');
+  const [activeTab, setActiveTab] = useState<string>('system');
   const [previewingURI, setPreviewingURI] = useState<string | null>(null);
 
   // Piper Search & Filter states
@@ -99,13 +100,20 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
     });
   }, [piperSearch, genderFilter, regionFilter]);
 
-  // Filter Web Speech voices
+  // Filter Web Speech voices (Studio/Natural voices always placed at top)
   const filteredSystemVNVoices = useMemo(() => {
-    if (!systemSearch.trim()) return vietnameseVoices;
-    const q = systemSearch.toLowerCase().trim();
-    return vietnameseVoices.filter(
-      (v) => v.name.toLowerCase().includes(q) || v.lang.toLowerCase().includes(q)
-    );
+    let list = vietnameseVoices;
+    if (systemSearch.trim()) {
+      const q = systemSearch.toLowerCase().trim();
+      list = list.filter(
+        (v) => v.name.toLowerCase().includes(q) || v.lang.toLowerCase().includes(q)
+      );
+    }
+    return [...list].sort((a, b) => {
+      const aIsStudio = /online|natural|neural|hoài|hoaimy|nam|namminh|linh|an/i.test(a.name) ? 1 : 0;
+      const bIsStudio = /online|natural|neural|hoài|hoaimy|nam|namminh|linh|an/i.test(b.name) ? 1 : 0;
+      return bIsStudio - aIsStudio;
+    });
   }, [vietnameseVoices, systemSearch]);
 
   const otherVoices = useMemo(() => {
@@ -176,6 +184,7 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
     setSelectedVoiceURI(voice.id);
     setNeuralSpeakerId(voice.speakerId);
     setTtsEngine('neural_piper');
+    setEngineMode('neural');
     message.success(`Đã chọn: ${voice.name}`);
     onClose();
   };
@@ -184,6 +193,7 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
   const handleSelectSystemVoice = (voice: SpeechSynthesisVoice) => {
     setSelectedVoiceURI(voice.voiceURI);
     setTtsEngine('webspeech');
+    setEngineMode('system');
     const info = formatVoiceInfo(voice);
     message.success(`Đã chọn: ${info.displayName}`);
     onClose();
@@ -213,17 +223,199 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
     >
       <Tabs
         activeKey={activeTab}
+        defaultActiveKey="system"
         onChange={setActiveTab}
         items={[
           {
-            key: 'neural',
+            key: 'system',
             label: (
-              <span style={{ fontSize: 14, fontWeight: 500 }}>
-                🌟 Giọng AI Tự Nhiên (Piper 65 giọng)
+              <span style={{ fontSize: 14, fontWeight: 600 }}>
+                🌟 Giọng Tự Nhiên Studio ({vietnameseVoices.length})
               </span>
             ),
             children: (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 4 }}>
+                <Alert
+                  type="success"
+                  showIcon
+                  message="Khuyên dùng cho Sách Nói (Đọc có hồn như người thật)"
+                  description="Các giọng đọc Neural thế hệ mới (Microsoft Hoài My, Nam Minh trên Edge/Windows hoặc Siri Linh, An trên iOS Safari). Phát âm rõ ràng, ngắt nghỉ cảm xúc, chuẩn tiếng Việt 100% và không cần tải thêm dữ liệu (0 MB)."
+                  style={{ borderRadius: 8 }}
+                />
+                <Input.Search
+                  placeholder="Tìm kiếm giọng đọc tự nhiên..."
+                  value={systemSearch}
+                  onChange={(e) => setSystemSearch(e.target.value)}
+                  allowClear
+                  size="middle"
+                  style={{ borderRadius: 8 }}
+                />
+
+                {vietnameseVoices.length === 0 ? (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    message="Chưa phát hiện giọng đọc Tiếng Việt của hệ thống"
+                    description={
+                      <div style={{ fontSize: 13, lineHeight: 1.6, marginTop: 6 }}>
+                        <p style={{ margin: '4px 0' }}>
+                          <AppleOutlined /> <strong>Trên iOS (iPhone/iPad):</strong> Vào <em>Cài đặt</em> &gt; <em>Trợ năng</em> &gt; <em>Đọc nội dung</em> &gt; <em>Giọng nói</em> &gt; <em>Tiếng Việt</em> &gt; Tải giọng <strong>Linh</strong> hoặc <strong>An</strong>.
+                        </p>
+                        <p style={{ margin: '4px 0' }}>
+                          <WindowsOutlined /> <strong>Trên Windows:</strong> Sử dụng trình duyệt <strong>Microsoft Edge</strong> để có sẵn giọng AI <strong>Hoài My</strong> &amp; <strong>Nam Minh</strong> cực hay.
+                        </p>
+                        <p style={{ margin: '4px 0' }}>
+                          <AndroidOutlined /> <strong>Trên Android:</strong> Cài đặt ứng dụng <em>Dịch vụ giọng nói của Google</em> và tải gói giọng nói Tiếng Việt.
+                        </p>
+                      </div>
+                    }
+                  />
+                ) : (
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#334155', marginBottom: 8 }}>
+                      🇻🇳 Giọng Đọc Tiếng Việt ({filteredSystemVNVoices.length})
+                    </div>
+                    <List
+                      dataSource={filteredSystemVNVoices}
+                      renderItem={(voice) => {
+                        const info = formatVoiceInfo(voice);
+                        const isSelected = voice.voiceURI === selectedVoiceURI;
+                        const isPreviewing = previewingURI === voice.voiceURI;
+
+                        return (
+                          <List.Item
+                            style={{
+                              padding: '10px 12px',
+                              borderRadius: 8,
+                              marginBottom: 6,
+                              border: isSelected ? '1.5px solid #1677ff' : '1px solid rgba(0,0,0,0.08)',
+                              background: isSelected ? 'rgba(22, 119, 255, 0.04)' : '#fafafa',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              transition: 'all 0.2s',
+                            }}
+                          >
+                            <div style={{ flex: 1, minWidth: 0, marginRight: 12 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                <Text strong style={{ fontSize: 14 }}>
+                                  {info.displayName}
+                                </Text>
+                                <Tag color={info.color} style={{ margin: 0, fontSize: 11 }}>
+                                  {info.badge}
+                                </Tag>
+                                {isSelected && (
+                                  <Tag color="blue" icon={<CheckOutlined />} style={{ margin: 0, fontSize: 11 }}>
+                                    Đang dùng
+                                  </Tag>
+                                )}
+                              </div>
+                              <Text type="secondary" style={{ fontSize: 11 }} ellipsis>
+                                {voice.voiceURI}
+                              </Text>
+                            </div>
+
+                            <Space size={6}>
+                              <Tooltip title="Nghe thử câu mẫu">
+                                <Button
+                                  size="small"
+                                  icon={<PlayCircleOutlined />}
+                                  loading={isPreviewing}
+                                  onClick={() => handlePreviewSystemVoice(voice)}
+                                >
+                                  Nghe thử
+                                </Button>
+                              </Tooltip>
+
+                              <Button
+                                type={isSelected ? 'default' : 'primary'}
+                                size="small"
+                                disabled={isSelected}
+                                onClick={() => handleSelectSystemVoice(voice)}
+                              >
+                                {isSelected ? 'Đã chọn' : 'Chọn'}
+                              </Button>
+                            </Space>
+                          </List.Item>
+                        );
+                      }}
+                    />
+                  </div>
+                )}
+
+                {/* International Voices (Collapsible) */}
+                {otherVoices.length > 0 && (
+                  <Collapse
+                    ghost
+                    items={[
+                      {
+                        key: 'other',
+                        label: (
+                          <Text type="secondary" style={{ fontSize: 13 }}>
+                            🌍 Các giọng đọc quốc tế khác ({otherVoices.length} giọng)
+                          </Text>
+                        ),
+                        children: (
+                          <List
+                            size="small"
+                            dataSource={otherVoices.slice(0, 20)}
+                            renderItem={(voice) => {
+                              const isSelected = voice.voiceURI === selectedVoiceURI;
+                              return (
+                                <List.Item
+                                  actions={[
+                                    <Button
+                                      key="preview"
+                                      type="text"
+                                      size="small"
+                                      icon={<PlayCircleOutlined />}
+                                      onClick={() => handlePreviewSystemVoice(voice)}
+                                    >
+                                      Thử
+                                    </Button>,
+                                    <Button
+                                      key="select"
+                                      size="small"
+                                      type={isSelected ? 'default' : 'link'}
+                                      disabled={isSelected}
+                                      onClick={() => handleSelectSystemVoice(voice)}
+                                    >
+                                      {isSelected ? 'Đã chọn' : 'Chọn'}
+                                    </Button>,
+                                  ]}
+                                >
+                                  <List.Item.Meta
+                                    title={<span style={{ fontSize: 13 }}>{voice.name}</span>}
+                                    description={<span style={{ fontSize: 11 }}>{voice.lang}</span>}
+                                  />
+                                </List.Item>
+                              );
+                            }}
+                          />
+                        ),
+                      },
+                    ]}
+                  />
+                )}
+              </div>
+            ),
+          },
+          {
+            key: 'neural',
+            label: (
+              <span style={{ fontSize: 14, fontWeight: 500 }}>
+                💾 Giọng Offline Nén (Piper VITS 65 giọng)
+              </span>
+            ),
+            children: (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 4 }}>
+                <Alert
+                  type="warning"
+                  showIcon
+                  message="Mô hình nén cục bộ (~27.8 MB) - Chỉ dùng khi không có Internet"
+                  description="Mô hình nén siêu nhỏ x_low chạy hoàn toàn offline khi đi máy bay. Do nén để giảm dung lượng nên âm sắc sẽ mộc và máy móc hơn so với giọng Studio tự nhiên ở Tab Giọng Tự Nhiên."
+                  style={{ borderRadius: 8 }}
+                />
                 {/* Model Download & Offline Cache Status Card */}
                 <Card
                   size="small"
@@ -437,173 +629,6 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                     );
                   }}
                 />
-              </div>
-            ),
-          },
-          {
-            key: 'system',
-            label: (
-              <span style={{ fontSize: 14, fontWeight: 500 }}>
-                📱 Giọng Hệ Thống ({vietnameseVoices.length})
-              </span>
-            ),
-            children: (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 4 }}>
-                <Input.Search
-                  placeholder="Tìm kiếm giọng trình duyệt..."
-                  value={systemSearch}
-                  onChange={(e) => setSystemSearch(e.target.value)}
-                  allowClear
-                  size="middle"
-                  style={{ borderRadius: 8 }}
-                />
-
-                {vietnameseVoices.length === 0 ? (
-                  <Alert
-                    type="warning"
-                    showIcon
-                    message="Chưa phát hiện giọng đọc Tiếng Việt của hệ thống"
-                    description={
-                      <div style={{ fontSize: 13, lineHeight: 1.6, marginTop: 6 }}>
-                        <p style={{ margin: '4px 0' }}>
-                          <AppleOutlined /> <strong>Trên iOS (iPhone/iPad):</strong> Vào <em>Cài đặt</em> &gt; <em>Trợ năng</em> &gt; <em>Đọc nội dung</em> &gt; <em>Giọng nói</em> &gt; <em>Tiếng Việt</em> &gt; Tải giọng <strong>Linh</strong> hoặc <strong>An</strong>.
-                        </p>
-                        <p style={{ margin: '4px 0' }}>
-                          <WindowsOutlined /> <strong>Trên Windows:</strong> Sử dụng trình duyệt <strong>Microsoft Edge</strong> để có sẵn giọng AI <strong>Hoài My</strong> &amp; <strong>Nam Minh</strong> cực hay.
-                        </p>
-                        <p style={{ margin: '4px 0' }}>
-                          <AndroidOutlined /> <strong>Trên Android:</strong> Cài đặt ứng dụng <em>Dịch vụ giọng nói của Google</em> và tải gói giọng nói Tiếng Việt.
-                        </p>
-                      </div>
-                    }
-                  />
-                ) : (
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: '#334155', marginBottom: 8 }}>
-                      🇻🇳 Giọng Đọc Tiếng Việt ({filteredSystemVNVoices.length})
-                    </div>
-                    <List
-                      dataSource={filteredSystemVNVoices}
-                      renderItem={(voice) => {
-                        const info = formatVoiceInfo(voice);
-                        const isSelected = voice.voiceURI === selectedVoiceURI;
-                        const isPreviewing = previewingURI === voice.voiceURI;
-
-                        return (
-                          <List.Item
-                            style={{
-                              padding: '10px 12px',
-                              borderRadius: 8,
-                              marginBottom: 6,
-                              border: isSelected ? '1.5px solid #1677ff' : '1px solid rgba(0,0,0,0.08)',
-                              background: isSelected ? 'rgba(22, 119, 255, 0.04)' : '#fafafa',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'space-between',
-                              transition: 'all 0.2s',
-                            }}
-                          >
-                            <div style={{ flex: 1, minWidth: 0, marginRight: 12 }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                                <Text strong style={{ fontSize: 14 }}>
-                                  {info.displayName}
-                                </Text>
-                                <Tag color={info.color} style={{ margin: 0, fontSize: 11 }}>
-                                  {info.badge}
-                                </Tag>
-                                {isSelected && (
-                                  <Tag color="blue" icon={<CheckOutlined />} style={{ margin: 0, fontSize: 11 }}>
-                                    Đang dùng
-                                  </Tag>
-                                )}
-                              </div>
-                              <Text type="secondary" style={{ fontSize: 11 }} ellipsis>
-                                {voice.voiceURI}
-                              </Text>
-                            </div>
-
-                            <Space size={6}>
-                              <Tooltip title="Nghe thử câu mẫu">
-                                <Button
-                                  size="small"
-                                  icon={<PlayCircleOutlined />}
-                                  loading={isPreviewing}
-                                  onClick={() => handlePreviewSystemVoice(voice)}
-                                >
-                                  Nghe thử
-                                </Button>
-                              </Tooltip>
-
-                              <Button
-                                type={isSelected ? 'default' : 'primary'}
-                                size="small"
-                                disabled={isSelected}
-                                onClick={() => handleSelectSystemVoice(voice)}
-                              >
-                                {isSelected ? 'Đã chọn' : 'Chọn'}
-                              </Button>
-                            </Space>
-                          </List.Item>
-                        );
-                      }}
-                    />
-                  </div>
-                )}
-
-                {/* International Voices (Collapsible) */}
-                {otherVoices.length > 0 && (
-                  <Collapse
-                    ghost
-                    items={[
-                      {
-                        key: 'other',
-                        label: (
-                          <Text type="secondary" style={{ fontSize: 13 }}>
-                            🌍 Các giọng đọc quốc tế khác ({otherVoices.length} giọng)
-                          </Text>
-                        ),
-                        children: (
-                          <List
-                            size="small"
-                            dataSource={otherVoices.slice(0, 20)}
-                            renderItem={(voice) => {
-                              const isSelected = voice.voiceURI === selectedVoiceURI;
-                              return (
-                                <List.Item
-                                  actions={[
-                                    <Button
-                                      key="preview"
-                                      type="text"
-                                      size="small"
-                                      icon={<PlayCircleOutlined />}
-                                      onClick={() => handlePreviewSystemVoice(voice)}
-                                    >
-                                      Thử
-                                    </Button>,
-                                    <Button
-                                      key="select"
-                                      size="small"
-                                      type={isSelected ? 'default' : 'link'}
-                                      disabled={isSelected}
-                                      onClick={() => handleSelectSystemVoice(voice)}
-                                    >
-                                      {isSelected ? 'Đã chọn' : 'Chọn'}
-                                    </Button>,
-                                  ]}
-                                >
-                                  <List.Item.Meta
-                                    title={<span style={{ fontSize: 13 }}>{voice.name}</span>}
-                                    description={<span style={{ fontSize: 11 }}>{voice.lang}</span>}
-                                  />
-                                </List.Item>
-                              );
-                            }}
-                          />
-                        ),
-                      },
-                    ]}
-                  />
-                )}
               </div>
             ),
           },

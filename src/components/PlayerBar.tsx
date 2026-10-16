@@ -53,6 +53,8 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({
     selectedVoiceURI,
     setSelectedVoiceURI,
     setNeuralSpeakerId,
+    setTtsEngine,
+    setEngineMode,
   } = useSettingsStore();
 
   // Responsive state: check if screen is mobile (< 768px)
@@ -77,14 +79,7 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({
   // Voice options grouped cleanly with compact labels (preventing rc-trigger negative coordinates)
   const voiceOptions = [
     {
-      label: '🌟 Giọng AI Tự Nhiên (Piper)',
-      options: PIPER_VOICES.slice(0, 15).map((pv) => ({
-        label: `${pv.name} (${pv.badge})`,
-        value: pv.id,
-      })),
-    },
-    {
-      label: '🇻🇳 Giọng Trình Duyệt Tiếng Việt',
+      label: '🌟 Giọng Tự Nhiên Studio (Khuyên dùng)',
       options: vietnameseVoices.map((v) => {
         const info = formatVoiceInfo(v);
         return {
@@ -92,6 +87,13 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({
           value: v.voiceURI,
         };
       }),
+    },
+    {
+      label: '💾 Giọng Offline Nén (Piper VITS)',
+      options: PIPER_VOICES.slice(0, 15).map((pv) => ({
+        label: `${pv.name} (${pv.badge})`,
+        value: pv.id,
+      })),
     },
     {
       label: '🌍 Giọng Đọc Quốc Tế',
@@ -109,6 +111,11 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({
       if (piperVoice) {
         setNeuralSpeakerId(piperVoice.speakerId);
       }
+      setTtsEngine('neural_piper');
+      setEngineMode('neural');
+    } else {
+      setTtsEngine('webspeech');
+      setEngineMode('system');
     }
   };
 
