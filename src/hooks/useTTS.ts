@@ -28,7 +28,27 @@ export interface UseTTSReturn {
   isIOS: boolean;
 }
 
-export function useTTS(onSentenceChange?: (index: number, sentence: string) => void): UseTTSReturn {
+export interface UseTTSOptions {
+  onSentenceChange?: (index: number, sentence: string) => void;
+  onChapterComplete?: () => void;
+}
+
+export function useTTS(
+  optionsOrSentenceChange?: ((index: number, sentence: string) => void) | UseTTSOptions
+): UseTTSReturn {
+  const onSentenceChange =
+    typeof optionsOrSentenceChange === 'function'
+      ? optionsOrSentenceChange
+      : optionsOrSentenceChange?.onSentenceChange;
+  const onChapterComplete =
+    typeof optionsOrSentenceChange === 'object'
+      ? optionsOrSentenceChange?.onChapterComplete
+      : undefined;
+
+  const onChapterCompleteRef = useRef(onChapterComplete);
+  useEffect(() => {
+    onChapterCompleteRef.current = onChapterComplete;
+  }, [onChapterComplete]);
   const {
     speechRate,
     speechPitch,
@@ -245,13 +265,26 @@ export function useTTS(onSentenceChange?: (index: number, sentence: string) => v
 
       if (!isPlayingRef.current) return;
 
-      // Check if Sleep Timer mode is 'chapter' and this is the last sentence
-      const timerState = sleepTimerRef.current;
-      if (timerState.isActive && timerState.targetMode === 'chapter' && idx >= list.length - 1) {
+      // Check if this is the last sentence in the chapter
+      if (idx >= list.length - 1) {
+        const timerState = sleepTimerRef.current;
+        if (timerState.isActive && timerState.targetMode === 'chapter') {
+          setPlaybackState('idle');
+          isPlayingRef.current = false;
+          synth.cancel();
+          setSleepTimer((prev) => ({ ...prev, isActive: false, remainingSeconds: 0 }));
+          return;
+        }
+
+        // Trigger auto next chapter if callback provided
+        if (onChapterCompleteRef.current) {
+          onChapterCompleteRef.current();
+          return;
+        }
+
+        // Reached end of reading
         setPlaybackState('idle');
         isPlayingRef.current = false;
-        synth.cancel();
-        setSleepTimer((prev) => ({ ...prev, isActive: false, remainingSeconds: 0 }));
         return;
       }
 

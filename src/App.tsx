@@ -1,12 +1,12 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { ConfigProvider, theme as antdTheme, message } from 'antd';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { ConfigProvider, App as AntdApp, theme as antdTheme, message } from 'antd';
 import type { Book } from './types';
 import { db } from './db';
 import { useSettingsStore } from './store/useSettingsStore';
 import { useTTS } from './hooks/useTTS';
 import { Navbar } from './components/Navbar';
 import { BookShelf } from './components/BookShelf';
-import { ReaderView } from './components/ReaderView';
+import { ReaderView, type ChapterControls } from './components/ReaderView';
 import { PlayerBar } from './components/PlayerBar';
 import { SleepTimerModal } from './components/SleepTimerModal';
 import { IOSGuideModal } from './components/iOSGuideModal';
@@ -19,6 +19,18 @@ export const App: React.FC = () => {
   const [isTimerModalOpen, setIsTimerModalOpen] = useState<boolean>(false);
   const [isIOSGuideOpen, setIsIOSGuideOpen] = useState<boolean>(false);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState<boolean>(false);
+
+  // References to chapter controls for auto next chapter transition
+  const chapterControlsRef = useRef<ChapterControls | null>(null);
+  const autoPlayNextChapterRef = useRef<boolean>(false);
+
+  // Auto transition to next chapter when current chapter finishes reading
+  const handleChapterComplete = useCallback(() => {
+    if (chapterControlsRef.current) {
+      autoPlayNextChapterRef.current = true;
+      chapterControlsRef.current.nextChapter();
+    }
+  }, []);
 
   // Core TTS hook
   const {
@@ -38,7 +50,9 @@ export const App: React.FC = () => {
     setSentencesList,
     startSleepTimer,
     cancelSleepTimer,
-  } = useTTS();
+  } = useTTS({
+    onChapterComplete: handleChapterComplete,
+  });
 
   // Load books from IndexedDB
   const loadBooks = useCallback(async () => {
@@ -76,8 +90,12 @@ export const App: React.FC = () => {
   const handleSentencesReady = useCallback(
     (newSentences: string[]) => {
       setSentencesList(newSentences, 0);
+      if (autoPlayNextChapterRef.current) {
+        autoPlayNextChapterRef.current = false;
+        play(newSentences, 0);
+      }
     },
-    [setSentencesList]
+    [setSentencesList, play]
   );
 
   // Ant Design v5 Theme Configuration
@@ -117,87 +135,92 @@ export const App: React.FC = () => {
 
   return (
     <ConfigProvider theme={getThemeConfig()}>
-      <div
-        style={{
-          width: '100%',
-          height: '100dvh',
-          display: 'flex',
-          flexDirection: 'column',
-          background: 'inherit',
-          color: 'inherit',
-          position: 'relative',
-        }}
-      >
-        {/* Top Header Navbar */}
-        <Navbar
-          currentBookTitle={currentBook?.title}
-          onBackToShelf={currentBook ? handleBackToShelf : undefined}
-          onOpenTimerModal={() => setIsTimerModalOpen(true)}
-          onOpenIOSGuide={() => setIsIOSGuideOpen(true)}
-          onOpenUpload={currentBook ? undefined : () => setIsUploadModalOpen(true)}
-          sleepTimer={sleepTimer}
-        />
-
-        {/* Content View: Shelf or Reader */}
-        <main
+      <AntdApp>
+        <div
           style={{
-            flex: 1,
-            minHeight: 0,
-            position: 'relative',
+            width: '100%',
+            height: '100dvh',
             display: 'flex',
             flexDirection: 'column',
-            overflow: 'hidden',
+            background: 'inherit',
+            color: 'inherit',
+            position: 'relative',
           }}
         >
-          {currentBook ? (
-            <ReaderView
-              book={currentBook}
+          {/* Top Header Navbar */}
+          <Navbar
+            currentBookTitle={currentBook?.title}
+            onBackToShelf={currentBook ? handleBackToShelf : undefined}
+            onOpenTimerModal={() => setIsTimerModalOpen(true)}
+            onOpenIOSGuide={() => setIsIOSGuideOpen(true)}
+            onOpenUpload={currentBook ? undefined : () => setIsUploadModalOpen(true)}
+            sleepTimer={sleepTimer}
+          />
+
+          {/* Content View: Shelf or Reader */}
+          <main
+            style={{
+              flex: 1,
+              minHeight: 0,
+              position: 'relative',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+          >
+            {currentBook ? (
+              <ReaderView
+                book={currentBook}
+                currentSentenceIndex={currentSentenceIndex}
+                onSentencesReady={handleSentencesReady}
+                onSentenceClick={jumpToSentence}
+                registerChapterControls={(ctrls) => {
+                  chapterControlsRef.current = ctrls;
+                }}
+              />
+            ) : (
+              <BookShelf
+                books={books}
+                onSelectBook={handleSelectBook}
+                onRefreshBooks={loadBooks}
+                isUploadModalOpen={isUploadModalOpen}
+                onCloseUploadModal={() => setIsUploadModalOpen(false)}
+              />
+            )}
+          </main>
+
+          {/* Fixed Player Bar at bottom (visible when reading book) */}
+          {currentBook && (
+            <PlayerBar
+              playbackState={playbackState}
+              onPlay={() => play()}
+              onPause={pause}
+              onNext={nextSentence}
+              onPrev={prevSentence}
+              currentSentence={currentSentence}
               currentSentenceIndex={currentSentenceIndex}
-              onSentencesReady={handleSentencesReady}
-              onSentenceClick={jumpToSentence}
-            />
-          ) : (
-            <BookShelf
-              books={books}
-              onSelectBook={handleSelectBook}
-              onRefreshBooks={loadBooks}
-              isUploadModalOpen={isUploadModalOpen}
-              onCloseUploadModal={() => setIsUploadModalOpen(false)}
+              totalSentences={sentences.length}
+              voices={voices}
+              vietnameseVoices={vietnameseVoices}
             />
           )}
-        </main>
 
-        {/* Fixed Player Bar at bottom (visible when reading book) */}
-        {currentBook && (
-          <PlayerBar
-            playbackState={playbackState}
-            onPlay={() => play()}
-            onPause={pause}
-            onNext={nextSentence}
-            onPrev={prevSentence}
-            currentSentence={currentSentence}
-            currentSentenceIndex={currentSentenceIndex}
-            totalSentences={sentences.length}
-            voices={voices}
-            vietnameseVoices={vietnameseVoices}
+          {/* Sleep Timer Modal */}
+          <SleepTimerModal
+            open={isTimerModalOpen}
+            onClose={() => setIsTimerModalOpen(false)}
+            sleepTimer={sleepTimer}
+            onStartTimer={startSleepTimer}
+            onCancelTimer={cancelSleepTimer}
           />
-        )}
 
-        {/* Sleep Timer Modal */}
-        <SleepTimerModal
-          open={isTimerModalOpen}
-          onClose={() => setIsTimerModalOpen(false)}
-          sleepTimer={sleepTimer}
-          onStartTimer={startSleepTimer}
-          onCancelTimer={cancelSleepTimer}
-        />
-
-        {/* iOS Safari Guide Modal */}
-        <IOSGuideModal
-          open={isIOSGuideOpen}
-          onClose={() => setIsIOSGuideOpen(false)}
-        />
-      </div>
+          {/* iOS Safari Guide Modal */}
+          <IOSGuideModal
+            open={isIOSGuideOpen}
+            onClose={() => setIsIOSGuideOpen(false)}
+          />
+        </div>
+      </AntdApp>
     </ConfigProvider>
   );
 };
