@@ -1,4 +1,5 @@
 import { getPiperVoiceById } from './piperVoices';
+import { getEdgeVoiceById } from '../services/edgeTTSService';
 
 export function formatVoiceInfo(v: SpeechSynthesisVoice | string): {
   displayName: string;
@@ -9,6 +10,17 @@ export function formatVoiceInfo(v: SpeechSynthesisVoice | string): {
 } {
   // If passed a string voiceURI
   if (typeof v === 'string') {
+    const edgeVoice = getEdgeVoiceById(v);
+    if (edgeVoice) {
+      return {
+        displayName: edgeVoice.name,
+        badge: edgeVoice.badge,
+        color: edgeVoice.color,
+        isNatural: true,
+        isVN: edgeVoice.lang.startsWith('vi'),
+      };
+    }
+
     if (v.startsWith('piper:')) {
       const piperVoice = getPiperVoiceById(v);
       if (piperVoice) {
@@ -33,8 +45,8 @@ export function formatVoiceInfo(v: SpeechSynthesisVoice | string): {
     const raw = v;
     if (raw.includes('Hoài My') || raw.includes('HoaiMy')) {
       return {
-        displayName: 'Hoài My',
-        badge: 'Nữ • Miền Nam (Tự nhiên)',
+        displayName: 'Hoài My (Studio)',
+        badge: '🌟 Studio • Nữ Nam Bộ',
         color: 'magenta',
         isNatural: true,
         isVN: true,
@@ -42,8 +54,8 @@ export function formatVoiceInfo(v: SpeechSynthesisVoice | string): {
     }
     if (raw.includes('Nam Minh') || raw.includes('NamMinh')) {
       return {
-        displayName: 'Nam Minh',
-        badge: 'Nam • Miền Bắc (Tự nhiên)',
+        displayName: 'Nam Minh (Studio)',
+        badge: '🌟 Studio • Nam Bắc Bộ',
         color: 'blue',
         isNatural: true,
         isVN: true,
@@ -74,6 +86,24 @@ export function formatVoiceInfo(v: SpeechSynthesisVoice | string): {
         color: 'green',
         isNatural: false,
         isVN: true,
+      };
+    }
+    if (raw.includes('Jenny')) {
+      return {
+        displayName: 'Jenny (US)',
+        badge: 'Nữ • English',
+        color: 'purple',
+        isNatural: true,
+        isVN: false,
+      };
+    }
+    if (raw.includes('Guy')) {
+      return {
+        displayName: 'Guy (US)',
+        badge: 'Nam • English',
+        color: 'cyan',
+        isNatural: true,
+        isVN: false,
       };
     }
     return {

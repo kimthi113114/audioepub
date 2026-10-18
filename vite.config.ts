@@ -3,6 +3,7 @@ import { defineConfig } from 'vite'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import { createTTSMiddleware } from './server/ttsMiddleware.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -11,8 +12,12 @@ export default defineConfig({
   plugins: [
     react(),
     {
-      name: 'onnx-wasm-server',
+      name: 'edge-tts-server',
       configureServer(server) {
+        // Mount Edge-TTS API middleware
+        server.middlewares.use(createTTSMiddleware())
+
+        // Fallback for onnx wasm streaming if needed
         server.middlewares.use((req, res, next) => {
           if (req.url && req.url.startsWith('/onnx/')) {
             const cleanUrl = req.url.split('?')[0].replace('/onnx/', '')

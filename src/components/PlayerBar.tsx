@@ -13,6 +13,7 @@ import { useSettingsStore } from '../store/useSettingsStore';
 import type { PlaybackState } from '../types';
 import { formatVoiceInfo } from '../utils/voiceHelper';
 import { PIPER_VOICES } from '../utils/piperVoices';
+import { EDGE_VOICES } from '../services/edgeTTSService';
 
 const { Text } = Typography;
 
@@ -79,7 +80,14 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({
   // Voice options grouped cleanly with compact labels (preventing rc-trigger negative coordinates)
   const voiceOptions = [
     {
-      label: '🌟 Giọng Tự Nhiên Studio (Khuyên dùng)',
+      label: '🌟 Giọng AI Studio 24kHz (Khuyên dùng)',
+      options: EDGE_VOICES.map((ev) => ({
+        label: `${ev.name} (${ev.badge})`,
+        value: ev.id,
+      })),
+    },
+    {
+      label: '📱 Giọng Trình Duyệt (Web Speech)',
       options: vietnameseVoices.map((v) => {
         const info = formatVoiceInfo(v);
         return {
@@ -87,13 +95,6 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({
           value: v.voiceURI,
         };
       }),
-    },
-    {
-      label: '💾 Giọng Offline Nén (Piper VITS)',
-      options: PIPER_VOICES.slice(0, 15).map((pv) => ({
-        label: `${pv.name} (${pv.badge})`,
-        value: pv.id,
-      })),
     },
     {
       label: '🌍 Giọng Đọc Quốc Tế',
@@ -106,7 +107,15 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({
 
   const handleVoiceSelect = (val: string) => {
     setSelectedVoiceURI(val);
-    if (val.startsWith('piper:')) {
+    if (
+      val === 'vi-VN-HoaiMyNeural' ||
+      val === 'vi-VN-NamMinhNeural' ||
+      val.endsWith('Neural') ||
+      EDGE_VOICES.some((ev) => ev.id === val)
+    ) {
+      setTtsEngine('edge');
+      setEngineMode('edge');
+    } else if (val.startsWith('piper:')) {
       const piperVoice = PIPER_VOICES.find((pv) => pv.id === val);
       if (piperVoice) {
         setNeuralSpeakerId(piperVoice.speakerId);

@@ -32,6 +32,9 @@ export interface Chapter {
 
 export type AppTheme = 'light' | 'dark' | 'sepia';
 
+export type TTSEngineMode = 'edge' | 'system' | 'neural';
+export type TTSEngineType = 'edge' | 'system' | 'webspeech' | 'neural' | 'neural_piper';
+
 export interface ReaderSettings {
   theme: AppTheme;
   fontSize: number; // in px: 14 to 32
@@ -43,7 +46,7 @@ export interface ReaderSettings {
   selectedVoiceURI: string;
   autoScroll: boolean;
   highlightSentence: boolean;
-  engineMode: 'neural' | 'system';
+  engineMode: TTSEngineMode;
   ttsEngine: TTSEngineType;
   neuralSpeakerId: number;
   neuralModelDownloaded: boolean;
@@ -66,9 +69,6 @@ export interface SleepTimerState {
   targetMode: 'time' | 'chapter';
   fadeAudio: boolean;
 }
-
-export type TTSEngineMode = 'neural' | 'system';
-export type TTSEngineType = 'neural' | 'system' | 'webspeech' | 'neural_piper';
 
 export interface VivosVoice {
   id: string;

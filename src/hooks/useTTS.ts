@@ -10,6 +10,13 @@ import {
   getVoiceById,
   parseSpeakerIdFromURI,
 } from '../services/piperService';
+import {
+  EDGE_VOICES,
+  getEdgeVoiceById,
+  getDefaultEdgeVoice,
+  fetchEdgeTTSBlob,
+  type EdgeVoice,
+} from '../services/edgeTTSService';
 import { LookaheadQueue } from '../services/lookaheadQueue';
 
 // Silent 1-second MP3 data URI to keep iOS Safari background audio alive in system Web Speech mode
@@ -18,8 +25,10 @@ const SILENT_AUDIO_URI =
 
 export interface UseTTSReturn {
   playbackState: PlaybackState;
-  engineMode: 'neural' | 'system';
-  setEngineMode: (mode: 'neural' | 'system') => void;
+  engineMode: 'edge' | 'neural' | 'system';
+  setEngineMode: (mode: 'edge' | 'neural' | 'system') => void;
+  edgeVoices: EdgeVoice[];
+  selectedEdgeVoice: EdgeVoice | null;
   isModelReady: boolean;
   downloadProgress: number;
   isDownloadingModel: boolean;
@@ -239,6 +248,9 @@ export function useTTS(
     voices[0] ||
     null;
 
+  const edgeVoices = EDGE_VOICES;
+  const selectedEdgeVoice = getEdgeVoiceById(selectedVoiceURI) || getDefaultEdgeVoice();
+
   const vivosVoices = VIVOS_VOICES;
   const currentSpeakerId = selectedVoiceURI.startsWith('piper:')
     ? parseSpeakerIdFromURI(selectedVoiceURI)
@@ -256,7 +268,7 @@ export function useTTS(
     (silentAudio as any).playsInline = true;
     silentAudioRef.current = silentAudio;
 
-    // Standard HTML5 Audio Element for Neural Piper Engine
+    // Standard HTML5 Audio Element for Neural Piper / Edge Engine
     const neuralAudio = new Audio();
     neuralAudio.setAttribute('playsinline', 'true');
     (neuralAudio as any).playsInline = true;
@@ -283,10 +295,22 @@ export function useTTS(
       if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
       try {
         navigator.mediaSession.playbackState = 'playing';
+        const isEdge =
+          selectedVoiceURI === 'vi-VN-HoaiMyNeural' ||
+          selectedVoiceURI === 'vi-VN-NamMinhNeural' ||
+          selectedVoiceURI.endsWith('Neural') ||
+          engineMode === 'edge';
         const isNeural = selectedVoiceURI.startsWith('piper:') || engineMode === 'neural';
-        const voiceName = isNeural
-          ? selectedVivosVoice?.name || 'VIVOS AI Tiếng Việt'
-          : selectedVoice?.name || 'AudioEpub Reader';
+
+        let voiceName = 'AudioEpub Reader';
+        if (isEdge) {
+          const edgeVoice = getEdgeVoiceById(selectedVoiceURI) || getDefaultEdgeVoice();
+          voiceName = `${edgeVoice.name} (Studio AI)`;
+        } else if (isNeural) {
+          voiceName = selectedVivosVoice?.name || 'VIVOS AI Tiếng Việt';
+        } else {
+          voiceName = selectedVoice?.name || 'AudioEpub Reader';
+        }
 
         navigator.mediaSession.metadata = new window.MediaMetadata({
           title: textToSpeak.length > 60 ? `${textToSpeak.slice(0, 60)}...` : textToSpeak,
@@ -379,6 +403,111 @@ export function useTTS(
   );
 
   // 4. Core Speech Engines
+  // A0. Microsoft Edge-TTS Studio Neural Engine (24kHz MP3 + Lookahead Queue)
+  const playEdgeSentence = useCallback(
+    async (idx: number) => {
+      const audio = neuralAudioRef.current;
+      if (!audio) return;
+
+      const list = sentencesRef.current;
+      if (idx >= list.length || idx < 0) {
+        setPlaybackState('idle');
+        isPlayingRef.current = false;
+        return;
+      }
+
+      const textToSpeak = list[idx].trim();
+      if (!textToSpeak) {
+        advanceToNext(idx);
+        return;
+      }
+
+      setPlaybackState('loading');
+      const voice = selectedVoiceURI || 'vi-VN-HoaiMyNeural';
+      const queue = lookaheadQueueRef.current;
+
+      try {
+        let blobUrl = '';
+        if (queue.hasReady(idx)) {
+          blobUrl = (await queue.get(idx)?.promise) || '';
+        } else {
+          blobUrl = await queue.prefetch(idx, textToSpeak, (txt) =>
+            fetchEdgeTTSBlob(txt, voice, speechRate, speechPitch)
+          );
+        }
+
+        if (!isPlayingRef.current) return;
+
+        // Revoke previously playing blob URL to prevent RAM leak
+        if (currentBlobUrlRef.current && currentBlobUrlRef.current !== blobUrl) {
+          URL.revokeObjectURL(currentBlobUrlRef.current);
+          currentBlobUrlRef.current = null;
+        }
+        currentBlobUrlRef.current = blobUrl;
+        queue.markPlaying(idx);
+
+        // Apply volume with Sleep Timer fade-out
+        const currentTimer = sleepTimerRef.current;
+        let effectiveVolume = volume;
+        if (currentTimer.isActive && currentTimer.fadeAudio && currentTimer.remainingSeconds <= 30) {
+          effectiveVolume = volume * Math.max(0, currentTimer.remainingSeconds / 30);
+        }
+
+        audio.src = blobUrl;
+        audio.playbackRate = speechRate;
+        audio.volume = effectiveVolume;
+
+        // Lookahead Prefetching: Start synthesizing next sentence (idx + 1) right away
+        const nextIdx = idx + 1;
+        if (nextIdx < list.length && list[nextIdx].trim()) {
+          queue
+            .prefetch(nextIdx, list[nextIdx].trim(), (txt) =>
+              fetchEdgeTTSBlob(txt, voice, speechRate, speechPitch)
+            )
+            .catch((err) => {
+              console.warn('[Edge Lookahead] Prefetch next sentence warning:', err);
+            });
+        }
+
+        audio.onended = () => {
+          queue.revoke(idx);
+          if (currentBlobUrlRef.current === blobUrl) {
+            URL.revokeObjectURL(blobUrl);
+            currentBlobUrlRef.current = null;
+          }
+
+          if (!isPlayingRef.current) return;
+          advanceToNext(idx);
+        };
+
+        audio.onerror = (e) => {
+          console.warn('[Edge Audio] Playback error on sentence:', idx, e);
+          queue.revoke(idx);
+          if (isPlayingRef.current) {
+            advanceToNext(idx);
+          }
+        };
+
+        await audio.play();
+        setPlaybackState('playing');
+        isPlayingRef.current = true;
+
+        if (onSentenceChangeRef.current) {
+          onSentenceChangeRef.current(idx, textToSpeak);
+        }
+
+        updateMediaSession(textToSpeak);
+        queue.pruneOlderThan(idx);
+      } catch (error) {
+        console.error('[Edge TTS] Error synthesizing sentence:', error);
+        if (isPlayingRef.current) {
+          advanceToNext(idx);
+        }
+      }
+    },
+    [advanceToNext, selectedVoiceURI, speechRate, speechPitch, volume, updateMediaSession]
+  );
+
   // A. Neural Piper WASM Engine (HTML5 <audio> + Lookahead Queue)
   const playNeuralSentence = useCallback(
     async (idx: number) => {
@@ -584,26 +713,49 @@ export function useTTS(
 
   // Unified Play Current Sentence Dispatcher
   const playCurrentSentence = useCallback(() => {
-    const isNeural = selectedVoiceURI.startsWith('piper:')
-      ? isModelReady
-      : engineMode === 'neural' && !selectedVoiceURI && isModelReady;
+    const isEdge =
+      selectedVoiceURI === 'vi-VN-HoaiMyNeural' ||
+      selectedVoiceURI === 'vi-VN-NamMinhNeural' ||
+      selectedVoiceURI.endsWith('Neural') ||
+      selectedVoiceURI.startsWith('vi-') ||
+      selectedVoiceURI.startsWith('en-US') ||
+      selectedVoiceURI.startsWith('zh-CN') ||
+      selectedVoiceURI.startsWith('ja-JP') ||
+      engineMode === 'edge';
+
+    const isNeural =
+      selectedVoiceURI.startsWith('piper:') ||
+      (engineMode === 'neural' && isModelReady);
+
     const idx = currentSentenceIndexRef.current;
 
-    if (isNeural) {
-      // Pause any system speech synthesis
+    if (isEdge) {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+      stopKeepAlive();
+      playEdgeSentence(idx);
+    } else if (isNeural) {
       if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
         window.speechSynthesis.cancel();
       }
       stopKeepAlive();
       playNeuralSentence(idx);
     } else {
-      // Pause neural audio
       if (neuralAudioRef.current) {
         neuralAudioRef.current.pause();
       }
       playSystemSentence(idx);
     }
-  }, [selectedVoiceURI, engineMode, isModelReady, playNeuralSentence, playSystemSentence, stopKeepAlive]);
+  }, [
+    selectedVoiceURI,
+    engineMode,
+    isModelReady,
+    playEdgeSentence,
+    playNeuralSentence,
+    playSystemSentence,
+    stopKeepAlive,
+  ]);
 
   useEffect(() => {
     playCurrentSentenceRef.current = playCurrentSentence;
@@ -640,7 +792,7 @@ export function useTTS(
   const pause = useCallback(() => {
     isPlayingRef.current = false;
 
-    // Pause Neural audio
+    // Pause Neural / Edge audio
     if (neuralAudioRef.current) {
       neuralAudioRef.current.pause();
     }
@@ -663,9 +815,16 @@ export function useTTS(
     isPlayingRef.current = true;
     setPlaybackState('playing');
 
-    const isNeural =
-      (selectedVoiceURI.startsWith('piper:') || engineMode === 'neural') && isModelReady;
-    if (isNeural && neuralAudioRef.current && neuralAudioRef.current.src) {
+    const isAudioEngine =
+      selectedVoiceURI === 'vi-VN-HoaiMyNeural' ||
+      selectedVoiceURI === 'vi-VN-NamMinhNeural' ||
+      selectedVoiceURI.endsWith('Neural') ||
+      selectedVoiceURI.startsWith('vi-') ||
+      selectedVoiceURI.startsWith('en-US') ||
+      engineMode === 'edge' ||
+      ((selectedVoiceURI.startsWith('piper:') || engineMode === 'neural') && isModelReady);
+
+    if (isAudioEngine && neuralAudioRef.current && neuralAudioRef.current.src) {
       neuralAudioRef.current.play().catch(() => {
         playCurrentSentence();
       });
@@ -916,6 +1075,53 @@ export function useTTS(
         }, 70);
       };
 
+      // 0. Preview Edge Studio Neural Voice via /api/tts proxy
+      const isEdge =
+        voiceURI === 'vi-VN-HoaiMyNeural' ||
+        voiceURI === 'vi-VN-NamMinhNeural' ||
+        voiceURI.endsWith('Neural') ||
+        voiceURI.startsWith('vi-') ||
+        voiceURI.startsWith('en-US') ||
+        voiceURI.startsWith('zh-CN') ||
+        voiceURI.startsWith('ja-JP') ||
+        EDGE_VOICES.some((ev) => ev.id === voiceURI);
+
+      if (isEdge) {
+        try {
+          const blob = await fetchEdgeTTSBlob(sampleText, voiceURI, speechRate, speechPitch);
+          if (previewUrlRef.current) {
+            URL.revokeObjectURL(previewUrlRef.current);
+            previewUrlRef.current = null;
+          }
+          const url = URL.createObjectURL(blob);
+          previewUrlRef.current = url;
+
+          if (pAudio) {
+            pAudio.src = url;
+            pAudio.playbackRate = speechRate;
+            pAudio.volume = volume;
+            pAudio.onended = () => {
+              if (previewUrlRef.current) {
+                URL.revokeObjectURL(previewUrlRef.current);
+                previewUrlRef.current = null;
+              }
+            };
+            pAudio.onerror = () => {
+              if (previewUrlRef.current) {
+                URL.revokeObjectURL(previewUrlRef.current);
+                previewUrlRef.current = null;
+              }
+            };
+            await pAudio.play();
+            return;
+          }
+        } catch (err) {
+          console.warn('[Edge Preview] /api/tts failed, falling back:', err);
+          message.error('Không thể phát nghe thử từ server Edge-TTS');
+          return;
+        }
+      }
+
       // 1. Preview Neural Voice via Audio Blob
       if (voiceURI.startsWith('piper:')) {
         const speakerId = parseSpeakerIdFromURI(voiceURI);
@@ -980,6 +1186,8 @@ export function useTTS(
     playbackState,
     engineMode,
     setEngineMode,
+    edgeVoices,
+    selectedEdgeVoice,
     isModelReady,
     downloadProgress,
     isDownloadingModel,

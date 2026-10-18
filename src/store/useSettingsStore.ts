@@ -4,7 +4,7 @@ import type { ReaderSettings, TTSEngineType } from '../types';
 
 interface SettingsStore extends ReaderSettings {
   readingMode: 'continuous' | 'paginated';
-  engineMode: 'neural' | 'system';
+  engineMode: 'edge' | 'neural' | 'system';
   ttsEngine: TTSEngineType;
   neuralSpeakerId: number;
   neuralModelDownloaded: boolean;
@@ -19,7 +19,7 @@ interface SettingsStore extends ReaderSettings {
   setAutoScroll: (autoScroll: boolean) => void;
   setHighlightSentence: (highlight: boolean) => void;
   setReadingMode: (mode: 'continuous' | 'paginated') => void;
-  setEngineMode: (mode: 'neural' | 'system') => void;
+  setEngineMode: (mode: 'edge' | 'neural' | 'system') => void;
   setTtsEngine: (engine: TTSEngineType) => void;
   setNeuralSpeakerId: (speakerId: number) => void;
   setNeuralModelDownloaded: (ready: boolean) => void;
@@ -28,7 +28,7 @@ interface SettingsStore extends ReaderSettings {
 
 const defaultSettings: ReaderSettings & {
   readingMode: 'continuous' | 'paginated';
-  engineMode: 'neural' | 'system';
+  engineMode: 'edge' | 'neural' | 'system';
   ttsEngine: TTSEngineType;
   neuralSpeakerId: number;
   neuralModelDownloaded: boolean;
@@ -40,12 +40,12 @@ const defaultSettings: ReaderSettings & {
   speechRate: 1.0,
   speechPitch: 1.0,
   volume: 1.0,
-  selectedVoiceURI: '',
+  selectedVoiceURI: 'vi-VN-HoaiMyNeural',
   autoScroll: true,
   highlightSentence: true,
   readingMode: 'continuous',
-  engineMode: 'system',
-  ttsEngine: 'system',
+  engineMode: 'edge',
+  ttsEngine: 'edge',
   neuralSpeakerId: 0,
   neuralModelDownloaded: false,
 };
@@ -62,7 +62,17 @@ export const useSettingsStore = create<SettingsStore>()(
       setSpeechPitch: (speechPitch) => set({ speechPitch }),
       setVolume: (volume) => set({ volume }),
       setSelectedVoiceURI: (selectedVoiceURI) => {
-        if (selectedVoiceURI.startsWith('piper:')) {
+        if (
+          selectedVoiceURI === 'vi-VN-HoaiMyNeural' ||
+          selectedVoiceURI === 'vi-VN-NamMinhNeural' ||
+          selectedVoiceURI.endsWith('Neural') ||
+          selectedVoiceURI.startsWith('vi-') ||
+          selectedVoiceURI.startsWith('en-US') ||
+          selectedVoiceURI.startsWith('zh-CN') ||
+          selectedVoiceURI.startsWith('ja-JP')
+        ) {
+          set({ selectedVoiceURI, engineMode: 'edge', ttsEngine: 'edge' });
+        } else if (selectedVoiceURI.startsWith('piper:')) {
           set({ selectedVoiceURI, engineMode: 'neural', ttsEngine: 'neural' });
         } else {
           set({ selectedVoiceURI, engineMode: 'system', ttsEngine: 'system' });
@@ -74,11 +84,11 @@ export const useSettingsStore = create<SettingsStore>()(
       setEngineMode: (engineMode) => {
         set({
           engineMode,
-          ttsEngine: engineMode === 'neural' ? 'neural' : 'system',
+          ttsEngine: engineMode === 'edge' ? 'edge' : engineMode === 'neural' ? 'neural' : 'system',
         });
       },
       setTtsEngine: (ttsEngine) => {
-        const engineMode = (ttsEngine === 'neural_piper' || ttsEngine === 'neural') ? 'neural' : 'system';
+        const engineMode = ttsEngine === 'edge' ? 'edge' : (ttsEngine === 'neural_piper' || ttsEngine === 'neural') ? 'neural' : 'system';
         set({ ttsEngine, engineMode });
       },
       setNeuralSpeakerId: (neuralSpeakerId) => set({ neuralSpeakerId }),
@@ -86,7 +96,7 @@ export const useSettingsStore = create<SettingsStore>()(
       resetSettings: () => set(defaultSettings),
     }),
     {
-      name: 'audioepub-settings-v1',
+      name: 'audioepub-settings-v2',
     }
   )
 );
