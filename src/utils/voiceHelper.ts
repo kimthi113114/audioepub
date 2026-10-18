@@ -1,5 +1,7 @@
 import { getPiperVoiceById } from './piperVoices';
 import { getEdgeVoiceById } from '../services/edgeTTSService';
+import { getKokoroVoiceById } from '../services/kokoroClientService';
+import { getVieNeuVoiceById } from '../services/vieneuService';
 
 export function formatVoiceInfo(v: SpeechSynthesisVoice | string): {
   displayName: string;
@@ -18,6 +20,28 @@ export function formatVoiceInfo(v: SpeechSynthesisVoice | string): {
         color: edgeVoice.color,
         isNatural: true,
         isVN: edgeVoice.lang.startsWith('vi'),
+      };
+    }
+
+    const kokoroVoice = getKokoroVoiceById(v);
+    if (kokoroVoice) {
+      return {
+        displayName: kokoroVoice.name,
+        badge: kokoroVoice.badge,
+        color: kokoroVoice.color,
+        isNatural: true,
+        isVN: !kokoroVoice.region.includes('Quốc tế'),
+      };
+    }
+
+    const vieneuVoice = getVieNeuVoiceById(v);
+    if (vieneuVoice) {
+      return {
+        displayName: vieneuVoice.name,
+        badge: vieneuVoice.badge,
+        color: vieneuVoice.color,
+        isNatural: true,
+        isVN: true,
       };
     }
 

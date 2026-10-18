@@ -17,6 +17,18 @@ import {
   fetchEdgeTTSBlob,
   type EdgeVoice,
 } from '../services/edgeTTSService';
+import {
+  KOKORO_VOICES,
+  getKokoroVoiceById,
+  kokoroService,
+  type KokoroVoiceItem,
+} from '../services/kokoroClientService';
+import {
+  VIENEU_VOICES,
+  getVieNeuVoiceById,
+  fetchVieNeuTTSBlob,
+  type VieNeuVoiceItem,
+} from '../services/vieneuService';
 import { LookaheadQueue } from '../services/lookaheadQueue';
 
 // Silent 1-second MP3 data URI to keep iOS Safari background audio alive in system Web Speech mode
@@ -25,10 +37,18 @@ const SILENT_AUDIO_URI =
 
 export interface UseTTSReturn {
   playbackState: PlaybackState;
-  engineMode: 'edge' | 'neural' | 'system';
-  setEngineMode: (mode: 'edge' | 'neural' | 'system') => void;
+  engineMode: 'edge' | 'kokoro' | 'vieneu' | 'neural' | 'system';
+  setEngineMode: (mode: 'edge' | 'kokoro' | 'vieneu' | 'neural' | 'system') => void;
   edgeVoices: EdgeVoice[];
   selectedEdgeVoice: EdgeVoice | null;
+  kokoroVoices: KokoroVoiceItem[];
+  selectedKokoroVoice: KokoroVoiceItem | null;
+  vieneuVoices: VieNeuVoiceItem[];
+  selectedVieNeuVoice: VieNeuVoiceItem | null;
+  isKokoroReady: boolean;
+  kokoroProgress: number;
+  isDownloadingKokoro: boolean;
+  downloadKokoroModel: (onProgress?: (percent: number) => void) => Promise<void>;
   isModelReady: boolean;
   downloadProgress: number;
   isDownloadingModel: boolean;
@@ -120,6 +140,32 @@ export function useTTS(
   const [isModelReady, setIsModelReady] = useState<boolean>(neuralModelDownloaded);
   const [downloadProgress, setDownloadProgress] = useState<number>(0);
   const [isDownloadingModel, setIsDownloadingModel] = useState<boolean>(false);
+
+  // Kokoro Client-side WebGPU/WASM Model States
+  const [isKokoroReady, setIsKokoroReady] = useState<boolean>(false);
+  const [kokoroProgress, setKokoroProgress] = useState<number>(0);
+  const [isDownloadingKokoro, setIsDownloadingKokoro] = useState<boolean>(false);
+
+  useEffect(() => {
+    kokoroService.isModelReady().then(setIsKokoroReady);
+  }, []);
+
+  const downloadKokoroModel = useCallback(async (onProgress?: (percent: number) => void) => {
+    setIsDownloadingKokoro(true);
+    setKokoroProgress(0);
+    try {
+      await kokoroService.loadModel((pct) => {
+        setKokoroProgress(pct);
+        if (onProgress) onProgress(pct);
+      });
+      setIsKokoroReady(true);
+    } catch (err) {
+      console.error('[Kokoro Download Error]:', err);
+      throw err;
+    } finally {
+      setIsDownloadingKokoro(false);
+    }
+  }, []);
 
   // Sleep timer state
   const [sleepTimer, setSleepTimer] = useState<SleepTimerState>({
@@ -251,6 +297,12 @@ export function useTTS(
   const edgeVoices = EDGE_VOICES;
   const selectedEdgeVoice = getEdgeVoiceById(selectedVoiceURI) || getDefaultEdgeVoice();
 
+  const kokoroVoices = KOKORO_VOICES;
+  const selectedKokoroVoice = getKokoroVoiceById(selectedVoiceURI) || KOKORO_VOICES[0];
+
+  const vieneuVoices = VIENEU_VOICES;
+  const selectedVieNeuVoice = getVieNeuVoiceById(selectedVoiceURI) || VIENEU_VOICES[0];
+
   const vivosVoices = VIVOS_VOICES;
   const currentSpeakerId = selectedVoiceURI.startsWith('piper:')
     ? parseSpeakerIdFromURI(selectedVoiceURI)
@@ -295,6 +347,8 @@ export function useTTS(
       if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
       try {
         navigator.mediaSession.playbackState = 'playing';
+        const isKokoro = selectedVoiceURI.startsWith('kokoro:') || engineMode === 'kokoro';
+        const isVieNeu = selectedVoiceURI.startsWith('vieneu:') || engineMode === 'vieneu';
         const isEdge =
           selectedVoiceURI === 'vi-VN-HoaiMyNeural' ||
           selectedVoiceURI === 'vi-VN-NamMinhNeural' ||
@@ -303,7 +357,13 @@ export function useTTS(
         const isNeural = selectedVoiceURI.startsWith('piper:') || engineMode === 'neural';
 
         let voiceName = 'AudioEpub Reader';
-        if (isEdge) {
+        if (isKokoro) {
+          const kVoice = getKokoroVoiceById(selectedVoiceURI) || KOKORO_VOICES[0];
+          voiceName = `${kVoice.name} (Kokoro Client AI)`;
+        } else if (isVieNeu) {
+          const vVoice = getVieNeuVoiceById(selectedVoiceURI) || VIENEU_VOICES[0];
+          voiceName = `${vVoice.name} (VieNeu 48kHz)`;
+        } else if (isEdge) {
           const edgeVoice = getEdgeVoiceById(selectedVoiceURI) || getDefaultEdgeVoice();
           voiceName = `${edgeVoice.name} (Studio AI)`;
         } else if (isNeural) {
@@ -503,6 +563,206 @@ export function useTTS(
         if (isPlayingRef.current) {
           advanceToNext(idx);
         }
+      }
+    },
+    [advanceToNext, selectedVoiceURI, speechRate, speechPitch, volume, updateMediaSession]
+  );
+
+  // A1. Kokoro Client-side WebGPU/WASM Engine (HTML5 <audio> + Lookahead Queue)
+  const playKokoroSentence = useCallback(
+    async (idx: number) => {
+      const audio = neuralAudioRef.current;
+      if (!audio) return;
+
+      const list = sentencesRef.current;
+      if (idx >= list.length || idx < 0) {
+        setPlaybackState('idle');
+        isPlayingRef.current = false;
+        return;
+      }
+
+      const textToSpeak = list[idx].trim();
+      if (!textToSpeak) {
+        advanceToNext(idx);
+        return;
+      }
+
+      setPlaybackState('loading');
+      const voiceKey = selectedVoiceURI.startsWith('kokoro:')
+        ? selectedVoiceURI.replace('kokoro:', '')
+        : 'diem_trinh';
+      const queue = lookaheadQueueRef.current;
+
+      try {
+        let blobUrl = '';
+        if (queue.hasReady(idx)) {
+          blobUrl = (await queue.get(idx)?.promise) || '';
+        } else {
+          blobUrl = await queue.prefetch(idx, textToSpeak, (txt) =>
+            kokoroService.synthesize(txt, voiceKey, speechRate)
+          );
+        }
+
+        if (!isPlayingRef.current) return;
+
+        if (currentBlobUrlRef.current && currentBlobUrlRef.current !== blobUrl) {
+          URL.revokeObjectURL(currentBlobUrlRef.current);
+          currentBlobUrlRef.current = null;
+        }
+        currentBlobUrlRef.current = blobUrl;
+        queue.markPlaying(idx);
+
+        const currentTimer = sleepTimerRef.current;
+        let effectiveVolume = volume;
+        if (currentTimer.isActive && currentTimer.fadeAudio && currentTimer.remainingSeconds <= 30) {
+          effectiveVolume = volume * Math.max(0, currentTimer.remainingSeconds / 30);
+        }
+
+        audio.src = blobUrl;
+        audio.playbackRate = speechRate;
+        audio.volume = effectiveVolume;
+
+        // Lookahead Prefetching: Start synthesizing next sentence (idx + 1)
+        const nextIdx = idx + 1;
+        if (nextIdx < list.length && list[nextIdx].trim()) {
+          queue
+            .prefetch(nextIdx, list[nextIdx].trim(), (txt) =>
+              kokoroService.synthesize(txt, voiceKey, speechRate)
+            )
+            .catch((err) => {
+              console.warn('[Kokoro Lookahead] Prefetch error:', err);
+            });
+        }
+
+        audio.onended = () => {
+          queue.revoke(idx);
+          if (currentBlobUrlRef.current === blobUrl) {
+            URL.revokeObjectURL(blobUrl);
+            currentBlobUrlRef.current = null;
+          }
+          if (!isPlayingRef.current) return;
+          advanceToNext(idx);
+        };
+
+        audio.onerror = (e) => {
+          console.warn('[Kokoro Audio] Playback error on sentence:', idx, e);
+          queue.revoke(idx);
+          if (isPlayingRef.current) advanceToNext(idx);
+        };
+
+        await audio.play();
+        setPlaybackState('playing');
+        isPlayingRef.current = true;
+
+        if (onSentenceChangeRef.current) {
+          onSentenceChangeRef.current(idx, textToSpeak);
+        }
+
+        updateMediaSession(textToSpeak);
+        queue.pruneOlderThan(idx);
+      } catch (error) {
+        console.error('[Kokoro TTS] Error synthesizing sentence:', error);
+        if (isPlayingRef.current) advanceToNext(idx);
+      }
+    },
+    [advanceToNext, selectedVoiceURI, speechRate, volume, updateMediaSession]
+  );
+
+  // A2. VieNeu-TTS 48kHz Engine (HTML5 <audio> + Lookahead Queue)
+  const playVieNeuSentence = useCallback(
+    async (idx: number) => {
+      const audio = neuralAudioRef.current;
+      if (!audio) return;
+
+      const list = sentencesRef.current;
+      if (idx >= list.length || idx < 0) {
+        setPlaybackState('idle');
+        isPlayingRef.current = false;
+        return;
+      }
+
+      const textToSpeak = list[idx].trim();
+      if (!textToSpeak) {
+        advanceToNext(idx);
+        return;
+      }
+
+      setPlaybackState('loading');
+      const voiceKey = selectedVoiceURI.startsWith('vieneu:')
+        ? selectedVoiceURI.replace('vieneu:', '')
+        : 'minh_quan';
+      const queue = lookaheadQueueRef.current;
+
+      try {
+        let blobUrl = '';
+        if (queue.hasReady(idx)) {
+          blobUrl = (await queue.get(idx)?.promise) || '';
+        } else {
+          blobUrl = await queue.prefetch(idx, textToSpeak, (txt) =>
+            fetchVieNeuTTSBlob(txt, voiceKey, speechRate, speechPitch)
+          );
+        }
+
+        if (!isPlayingRef.current) return;
+
+        if (currentBlobUrlRef.current && currentBlobUrlRef.current !== blobUrl) {
+          URL.revokeObjectURL(currentBlobUrlRef.current);
+          currentBlobUrlRef.current = null;
+        }
+        currentBlobUrlRef.current = blobUrl;
+        queue.markPlaying(idx);
+
+        const currentTimer = sleepTimerRef.current;
+        let effectiveVolume = volume;
+        if (currentTimer.isActive && currentTimer.fadeAudio && currentTimer.remainingSeconds <= 30) {
+          effectiveVolume = volume * Math.max(0, currentTimer.remainingSeconds / 30);
+        }
+
+        audio.src = blobUrl;
+        audio.playbackRate = speechRate;
+        audio.volume = effectiveVolume;
+
+        // Lookahead Prefetching: Start synthesizing next sentence (idx + 1)
+        const nextIdx = idx + 1;
+        if (nextIdx < list.length && list[nextIdx].trim()) {
+          queue
+            .prefetch(nextIdx, list[nextIdx].trim(), (txt) =>
+              fetchVieNeuTTSBlob(txt, voiceKey, speechRate, speechPitch)
+            )
+            .catch((err) => {
+              console.warn('[VieNeu Lookahead] Prefetch error:', err);
+            });
+        }
+
+        audio.onended = () => {
+          queue.revoke(idx);
+          if (currentBlobUrlRef.current === blobUrl) {
+            URL.revokeObjectURL(blobUrl);
+            currentBlobUrlRef.current = null;
+          }
+          if (!isPlayingRef.current) return;
+          advanceToNext(idx);
+        };
+
+        audio.onerror = (e) => {
+          console.warn('[VieNeu Audio] Playback error on sentence:', idx, e);
+          queue.revoke(idx);
+          if (isPlayingRef.current) advanceToNext(idx);
+        };
+
+        await audio.play();
+        setPlaybackState('playing');
+        isPlayingRef.current = true;
+
+        if (onSentenceChangeRef.current) {
+          onSentenceChangeRef.current(idx, textToSpeak);
+        }
+
+        updateMediaSession(textToSpeak);
+        queue.pruneOlderThan(idx);
+      } catch (error) {
+        console.error('[VieNeu TTS] Error synthesizing sentence:', error);
+        if (isPlayingRef.current) advanceToNext(idx);
       }
     },
     [advanceToNext, selectedVoiceURI, speechRate, speechPitch, volume, updateMediaSession]
@@ -713,6 +973,14 @@ export function useTTS(
 
   // Unified Play Current Sentence Dispatcher
   const playCurrentSentence = useCallback(() => {
+    const isKokoro =
+      selectedVoiceURI.startsWith('kokoro:') ||
+      engineMode === 'kokoro';
+
+    const isVieNeu =
+      selectedVoiceURI.startsWith('vieneu:') ||
+      engineMode === 'vieneu';
+
     const isEdge =
       selectedVoiceURI === 'vi-VN-HoaiMyNeural' ||
       selectedVoiceURI === 'vi-VN-NamMinhNeural' ||
@@ -729,7 +997,19 @@ export function useTTS(
 
     const idx = currentSentenceIndexRef.current;
 
-    if (isEdge) {
+    if (isKokoro) {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+      stopKeepAlive();
+      playKokoroSentence(idx);
+    } else if (isVieNeu) {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+      stopKeepAlive();
+      playVieNeuSentence(idx);
+    } else if (isEdge) {
       if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
         window.speechSynthesis.cancel();
       }
@@ -751,6 +1031,8 @@ export function useTTS(
     selectedVoiceURI,
     engineMode,
     isModelReady,
+    playKokoroSentence,
+    playVieNeuSentence,
     playEdgeSentence,
     playNeuralSentence,
     playSystemSentence,
@@ -816,11 +1098,15 @@ export function useTTS(
     setPlaybackState('playing');
 
     const isAudioEngine =
+      selectedVoiceURI.startsWith('kokoro:') ||
+      selectedVoiceURI.startsWith('vieneu:') ||
       selectedVoiceURI === 'vi-VN-HoaiMyNeural' ||
       selectedVoiceURI === 'vi-VN-NamMinhNeural' ||
       selectedVoiceURI.endsWith('Neural') ||
       selectedVoiceURI.startsWith('vi-') ||
       selectedVoiceURI.startsWith('en-US') ||
+      engineMode === 'kokoro' ||
+      engineMode === 'vieneu' ||
       engineMode === 'edge' ||
       ((selectedVoiceURI.startsWith('piper:') || engineMode === 'neural') && isModelReady);
 
@@ -989,7 +1275,7 @@ export function useTTS(
     }
   }, [speechRate, volume]);
 
-  // Preview Voice Sample Text (Dual-Engine Preview)
+  // Preview Voice Sample Text (Multi-Engine Preview)
   const previewVoice = useCallback(
     async (
       voiceURI: string,
@@ -1075,7 +1361,83 @@ export function useTTS(
         }, 70);
       };
 
-      // 0. Preview Edge Studio Neural Voice via /api/tts proxy
+      // 1. Preview Kokoro Client WebGPU/WASM Voice
+      if (voiceURI.startsWith('kokoro:')) {
+        const voiceKey = voiceURI.replace('kokoro:', '');
+        try {
+          const blob = await kokoroService.synthesize(sampleText, voiceKey, speechRate);
+          if (previewUrlRef.current) {
+            URL.revokeObjectURL(previewUrlRef.current);
+            previewUrlRef.current = null;
+          }
+          const url = URL.createObjectURL(blob);
+          previewUrlRef.current = url;
+
+          if (pAudio) {
+            pAudio.src = url;
+            pAudio.playbackRate = speechRate;
+            pAudio.volume = volume;
+            pAudio.onended = () => {
+              if (previewUrlRef.current) {
+                URL.revokeObjectURL(previewUrlRef.current);
+                previewUrlRef.current = null;
+              }
+            };
+            pAudio.onerror = () => {
+              if (previewUrlRef.current) {
+                URL.revokeObjectURL(previewUrlRef.current);
+                previewUrlRef.current = null;
+              }
+            };
+            await pAudio.play();
+            return;
+          }
+        } catch (err) {
+          console.warn('[Kokoro Preview] Failed, falling back:', err);
+          message.error('Không thể phát nghe thử giọng Kokoro');
+          return;
+        }
+      }
+
+      // 2. Preview VieNeu 48kHz Voice
+      if (voiceURI.startsWith('vieneu:')) {
+        const voiceKey = voiceURI.replace('vieneu:', '');
+        try {
+          const blob = await fetchVieNeuTTSBlob(sampleText, voiceKey, speechRate, speechPitch);
+          if (previewUrlRef.current) {
+            URL.revokeObjectURL(previewUrlRef.current);
+            previewUrlRef.current = null;
+          }
+          const url = URL.createObjectURL(blob);
+          previewUrlRef.current = url;
+
+          if (pAudio) {
+            pAudio.src = url;
+            pAudio.playbackRate = speechRate;
+            pAudio.volume = volume;
+            pAudio.onended = () => {
+              if (previewUrlRef.current) {
+                URL.revokeObjectURL(previewUrlRef.current);
+                previewUrlRef.current = null;
+              }
+            };
+            pAudio.onerror = () => {
+              if (previewUrlRef.current) {
+                URL.revokeObjectURL(previewUrlRef.current);
+                previewUrlRef.current = null;
+              }
+            };
+            await pAudio.play();
+            return;
+          }
+        } catch (err) {
+          console.warn('[VieNeu Preview] Failed, falling back:', err);
+          message.error('Không thể phát nghe thử giọng VieNeu');
+          return;
+        }
+      }
+
+      // 3. Preview Edge Studio Neural Voice via /api/tts proxy
       const isEdge =
         voiceURI === 'vi-VN-HoaiMyNeural' ||
         voiceURI === 'vi-VN-NamMinhNeural' ||
@@ -1122,7 +1484,7 @@ export function useTTS(
         }
       }
 
-      // 1. Preview Neural Voice via Audio Blob
+      // 4. Preview Neural Piper Voice via Audio Blob
       if (voiceURI.startsWith('piper:')) {
         const speakerId = parseSpeakerIdFromURI(voiceURI);
         const voiceInfo = getVoiceById(voiceURI);
@@ -1174,7 +1536,7 @@ export function useTTS(
         return;
       }
 
-      // 2. Preview System Web Speech Voice
+      // 5. Preview System Web Speech Voice
       const sysVoice = voices.find((v) => v.voiceURI === voiceURI);
       const isMaleSys = sysVoice ? /nam|minh|male/i.test(sysVoice.name) : false;
       playWebSpeechPreview(voiceURI, isMaleSys ? 'male' : 'female', 1.0);
@@ -1188,6 +1550,14 @@ export function useTTS(
     setEngineMode,
     edgeVoices,
     selectedEdgeVoice,
+    kokoroVoices,
+    selectedKokoroVoice,
+    vieneuVoices,
+    selectedVieNeuVoice,
+    isKokoroReady,
+    kokoroProgress,
+    isDownloadingKokoro,
+    downloadKokoroModel,
     isModelReady,
     downloadProgress,
     isDownloadingModel,

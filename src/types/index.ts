@@ -32,8 +32,41 @@ export interface Chapter {
 
 export type AppTheme = 'light' | 'dark' | 'sepia';
 
-export type TTSEngineMode = 'edge' | 'system' | 'neural';
-export type TTSEngineType = 'edge' | 'system' | 'webspeech' | 'neural' | 'neural_piper';
+export type TTSEngineMode = 'edge' | 'kokoro' | 'vieneu' | 'system' | 'neural';
+export type TTSEngineType =
+  | 'edge'
+  | 'kokoro'
+  | 'vieneu'
+  | 'system'
+  | 'webspeech'
+  | 'neural'
+  | 'neural_piper';
+
+export interface KokoroVoiceItem {
+  id: string; // e.g. 'kokoro:diem_trinh'
+  voiceKey: string; // 'diem_trinh'
+  name: string;
+  shortName: string;
+  gender: 'female' | 'male';
+  region: 'Miền Nam' | 'Miền Bắc' | 'Quốc tế';
+  badge: string;
+  color: string;
+  description: string;
+  isRecommended?: boolean;
+}
+
+export interface VieNeuVoiceItem {
+  id: string; // e.g. 'vieneu:minh_quan'
+  voiceKey: string; // 'minh_quan'
+  name: string;
+  shortName: string;
+  gender: 'female' | 'male';
+  region: 'Miền Bắc' | 'Miền Nam';
+  badge: string;
+  color: string;
+  description: string;
+  isRecommended?: boolean;
+}
 
 export interface ReaderSettings {
   theme: AppTheme;

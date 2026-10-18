@@ -14,6 +14,8 @@ import type { PlaybackState } from '../types';
 import { formatVoiceInfo } from '../utils/voiceHelper';
 import { PIPER_VOICES } from '../utils/piperVoices';
 import { EDGE_VOICES } from '../services/edgeTTSService';
+import { KOKORO_VOICES } from '../services/kokoroClientService';
+import { VIENEU_VOICES } from '../services/vieneuService';
 
 const { Text } = Typography;
 
@@ -87,6 +89,20 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({
       })),
     },
     {
+      label: '🌸 Kokoro AI (100% Client-side WebGPU)',
+      options: KOKORO_VOICES.map((kv) => ({
+        label: `${kv.name} (${kv.region})`,
+        value: kv.id,
+      })),
+    },
+    {
+      label: '🚀 VieNeu-TTS (48kHz Ultra HD)',
+      options: VIENEU_VOICES.map((vv) => ({
+        label: `${vv.name} (${vv.region})`,
+        value: vv.id,
+      })),
+    },
+    {
       label: '📱 Giọng Trình Duyệt (Web Speech)',
       options: vietnameseVoices.map((v) => {
         const info = formatVoiceInfo(v);
@@ -107,7 +123,13 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({
 
   const handleVoiceSelect = (val: string) => {
     setSelectedVoiceURI(val);
-    if (
+    if (val.startsWith('kokoro:')) {
+      setTtsEngine('kokoro');
+      setEngineMode('kokoro');
+    } else if (val.startsWith('vieneu:')) {
+      setTtsEngine('vieneu');
+      setEngineMode('vieneu');
+    } else if (
       val === 'vi-VN-HoaiMyNeural' ||
       val === 'vi-VN-NamMinhNeural' ||
       val.endsWith('Neural') ||

@@ -174,9 +174,11 @@ export const Navbar: React.FC<NavbarProps> = ({
         {onOpenVoiceModal && (
           <Tooltip title="Chọn & Nghe thử giọng đọc">
             <Button
+              id="btn-voice-modal"
               type="text"
               icon={<CustomerServiceOutlined style={{ color: '#1677ff' }} />}
               onClick={onOpenVoiceModal}
+              aria-label="Chọn & Nghe thử giọng đọc"
               style={{ fontSize: 16 }}
             />
           </Tooltip>

@@ -11,6 +11,7 @@ import {
   Alert,
   Tooltip,
   Card,
+  Progress,
   message,
 } from 'antd';
 import {
@@ -26,10 +27,16 @@ import {
   StarFilled,
   GlobalOutlined,
   LoadingOutlined,
+  ThunderboltFilled,
+  CloudDownloadOutlined,
+  CheckCircleFilled,
+  FireFilled,
 } from '@ant-design/icons';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { formatVoiceInfo } from '../utils/voiceHelper';
 import { EDGE_VOICES, type EdgeVoice } from '../services/edgeTTSService';
+import { KOKORO_VOICES, type KokoroVoiceItem } from '../services/kokoroClientService';
+import { VIENEU_VOICES, type VieNeuVoiceItem } from '../services/vieneuService';
 
 const { Text } = Typography;
 
@@ -39,6 +46,10 @@ interface VoiceModalProps {
   voices: SpeechSynthesisVoice[];
   vietnameseVoices: SpeechSynthesisVoice[];
   onPreviewVoice: (voiceURI: string, sampleText?: string) => void;
+  isKokoroReady?: boolean;
+  kokoroProgress?: number;
+  isDownloadingKokoro?: boolean;
+  onDownloadKokoroModel?: (onProgress?: (percent: number) => void) => Promise<void>;
 }
 
 export const VoiceModal: React.FC<VoiceModalProps> = ({
@@ -47,6 +58,10 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
   voices,
   vietnameseVoices,
   onPreviewVoice,
+  isKokoroReady = false,
+  kokoroProgress = 0,
+  isDownloadingKokoro = false,
+  onDownloadKokoroModel,
 }) => {
   const {
     selectedVoiceURI,
@@ -60,6 +75,8 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
 
   // Search filter states
   const [edgeSearch, setEdgeSearch] = useState<string>('');
+  const [kokoroSearch, setKokoroSearch] = useState<string>('');
+  const [vieneuSearch, setVieNeuSearch] = useState<string>('');
   const [systemSearch, setSystemSearch] = useState<string>('');
 
   // Filter Edge Studio Voices
@@ -74,6 +91,32 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
         v.description.toLowerCase().includes(q)
     );
   }, [edgeSearch]);
+
+  // Filter Kokoro Voices
+  const filteredKokoroVoices = useMemo(() => {
+    if (!kokoroSearch.trim()) return KOKORO_VOICES;
+    const q = kokoroSearch.toLowerCase().trim();
+    return KOKORO_VOICES.filter(
+      (v) =>
+        v.name.toLowerCase().includes(q) ||
+        v.region.toLowerCase().includes(q) ||
+        v.badge.toLowerCase().includes(q) ||
+        v.description.toLowerCase().includes(q)
+    );
+  }, [kokoroSearch]);
+
+  // Filter VieNeu Voices
+  const filteredVieNeuVoices = useMemo(() => {
+    if (!vieneuSearch.trim()) return VIENEU_VOICES;
+    const q = vieneuSearch.toLowerCase().trim();
+    return VIENEU_VOICES.filter(
+      (v) =>
+        v.name.toLowerCase().includes(q) ||
+        v.region.toLowerCase().includes(q) ||
+        v.badge.toLowerCase().includes(q) ||
+        v.description.toLowerCase().includes(q)
+    );
+  }, [vieneuSearch]);
 
   // Filter Web Speech voices
   const filteredSystemVNVoices = useMemo(() => {
@@ -111,6 +154,28 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
     }, 4500);
   };
 
+  const handlePreviewKokoroVoice = (voice: KokoroVoiceItem) => {
+    setPreviewingURI(voice.id);
+    const sample = voice.id.includes('af_heart')
+      ? `Hello! I am Heart from Kokoro-82M, running 100% inside your browser.`
+      : `Xin chào! Tôi là ${voice.shortName}, giọng đọc Kokoro AI chạy trực tiếp 100% trên trình duyệt của bạn.`;
+    onPreviewVoice(voice.id, sample);
+
+    setTimeout(() => {
+      setPreviewingURI((current) => (current === voice.id ? null : current));
+    }, 4500);
+  };
+
+  const handlePreviewVieNeuVoice = (voice: VieNeuVoiceItem) => {
+    setPreviewingURI(voice.id);
+    const sample = `Xin chào! Tôi là ${voice.shortName}, giọng đọc VieNeu 48 kilô héc độ nét cao, truyền cảm hứng cho từng trang sách.`;
+    onPreviewVoice(voice.id, sample);
+
+    setTimeout(() => {
+      setPreviewingURI((current) => (current === voice.id ? null : current));
+    }, 4500);
+  };
+
   const handlePreviewSystemVoice = (voice: SpeechSynthesisVoice) => {
     setPreviewingURI(voice.voiceURI);
     const info = formatVoiceInfo(voice);
@@ -122,7 +187,7 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
     }, 4000);
   };
 
-  // Select Edge Voice
+  // Select Handlers
   const handleSelectEdgeVoice = (voice: EdgeVoice) => {
     setSelectedVoiceURI(voice.id);
     setTtsEngine('edge');
@@ -131,7 +196,22 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
     onClose();
   };
 
-  // Select System Voice
+  const handleSelectKokoroVoice = (voice: KokoroVoiceItem) => {
+    setSelectedVoiceURI(voice.id);
+    setTtsEngine('kokoro');
+    setEngineMode('kokoro');
+    message.success(`Đã chọn: ${voice.name}`);
+    onClose();
+  };
+
+  const handleSelectVieNeuVoice = (voice: VieNeuVoiceItem) => {
+    setSelectedVoiceURI(voice.id);
+    setTtsEngine('vieneu');
+    setEngineMode('vieneu');
+    message.success(`Đã chọn: ${voice.name}`);
+    onClose();
+  };
+
   const handleSelectSystemVoice = (voice: SpeechSynthesisVoice) => {
     setSelectedVoiceURI(voice.voiceURI);
     setTtsEngine('webspeech');
@@ -147,7 +227,7 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
       return <AppleOutlined style={{ color: '#000000', fontSize: 16 }} />;
     }
     if (lower.includes('microsoft') || lower.includes('windows') || lower.includes('natural')) {
-      return <WindowsOutlined style={{ color: '#0078d4', fontSize: 16 }} />;
+      return <WindowsOutlined style={{ color: '#078d4', fontSize: 16 }} />;
     }
     if (lower.includes('google') || lower.includes('android')) {
       return <AndroidOutlined style={{ color: '#34a853', fontSize: 16 }} />;
@@ -182,14 +262,14 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
               Trung Tâm Giọng Đọc Sách
             </div>
             <div style={{ fontSize: 12, color: '#64748b', fontWeight: 400 }}>
-              Giọng AI Studio 24kHz chuẩn phòng thu • Tự nhiên như người thật
+              Công nghệ TTS Đa Động Cơ • Studio Neural 24kHz • Kokoro WebGPU Client • VieNeu 48kHz
             </div>
           </div>
         </div>
       }
-      width={720}
+      width={760}
       styles={{
-        body: { maxHeight: '72vh', overflowY: 'auto', paddingRight: 6 },
+        body: { maxHeight: '74vh', overflowY: 'auto', paddingRight: 6 },
       }}
       destroyOnClose
     >
@@ -198,6 +278,7 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
         onChange={setActiveTab}
         style={{ marginTop: 8 }}
         items={[
+          // TAB 1: EDGE STUDIO NEURAL
           {
             key: 'edge',
             label: (
@@ -207,7 +288,6 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
             ),
             children: (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                {/* Intro Card */}
                 <Card
                   size="small"
                   style={{
@@ -235,7 +315,6 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                   </Space>
                 </Card>
 
-                {/* Search Bar */}
                 <Input.Search
                   placeholder="Tìm kiếm giọng đọc (Hoài My, Nam Minh, Jenny, Bắc, Nam...)"
                   allowClear
@@ -244,7 +323,6 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                   style={{ borderRadius: 8 }}
                 />
 
-                {/* Studio Voice List */}
                 <List
                   dataSource={filteredEdgeVoices}
                   renderItem={(voice) => {
@@ -272,7 +350,6 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                             gap: 12,
                           }}
                         >
-                          {/* Voice Info */}
                           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
                             <div
                               style={{
@@ -308,20 +385,12 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                                   {voice.badge}
                                 </Tag>
                               </div>
-                              <div
-                                style={{
-                                  fontSize: 12,
-                                  color: '#64748b',
-                                  marginTop: 3,
-                                  lineHeight: 1.4,
-                                }}
-                              >
+                              <div style={{ fontSize: 12, color: '#64748b', marginTop: 3, lineHeight: 1.4 }}>
                                 {voice.description}
                               </div>
                             </div>
                           </div>
 
-                          {/* Action Buttons */}
                           <Space size={8} style={{ flexShrink: 0 }}>
                             <Tooltip title="Nghe thử đoạn mẫu">
                               <Button
@@ -340,10 +409,226 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                               size="middle"
                               icon={isSelected ? <CheckOutlined /> : undefined}
                               onClick={() => handleSelectEdgeVoice(voice)}
+                              style={{ borderRadius: 6, fontWeight: 600, minWidth: 100 }}
+                            >
+                              {isSelected ? 'Đang chọn' : 'Chọn giọng'}
+                            </Button>
+                          </Space>
+                        </div>
+                      </List.Item>
+                    );
+                  }}
+                />
+              </div>
+            ),
+          },
+
+          // TAB 2: KOKORO TTS (100% CLIENT-SIDE WEBGPU/WASM)
+          {
+            key: 'kokoro',
+            label: (
+              <span style={{ fontSize: 14, fontWeight: 600 }}>
+                🌸 Kokoro AI (100% Client-side)
+              </span>
+            ),
+            children: (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <Card
+                  size="small"
+                  style={{
+                    background: 'linear-gradient(135deg, #fff0f6 0%, #f6ffed 100%)',
+                    borderColor: '#ffadd2',
+                    borderRadius: 10,
+                  }}
+                >
+                  <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <ThunderboltFilled style={{ color: '#eb2f96', fontSize: 18 }} />
+                        <span style={{ fontWeight: 700, color: '#c41d7f', fontSize: 14 }}>
+                          Kokoro-82M ONNX (100% In-Browser WebGPU)
+                        </span>
+                      </div>
+                      <Space size={6}>
+                        {isKokoroReady ? (
+                          <Tag icon={<CheckCircleFilled />} color="success" style={{ fontWeight: 600, borderRadius: 10 }}>
+                            Đã sẵn sàng trên máy (WebGPU)
+                          </Tag>
+                        ) : (
+                          <Tag color="magenta" style={{ fontWeight: 600, borderRadius: 10 }}>
+                            Mô hình ~85MB
+                          </Tag>
+                        )}
+                        <Tag color="blue" style={{ borderRadius: 10 }}>
+                          Chạy Offline 100%
+                        </Tag>
+                      </Space>
+                    </div>
+
+                    <Text style={{ fontSize: 12, color: '#475569' }}>
+                      Công nghệ WebGPU/WASM đưa trí tuệ nhân tạo chạy hoàn toàn bên trong trình duyệt máy khách (Client-side). Không gửi văn bản ra ngoài máy chủ, hoàn toàn riêng tư, đọc sách ngay cả khi máy bay không có mạng internet.
+                    </Text>
+
+                    {/* Download Card if not downloaded */}
+                    {!isKokoroReady && (
+                      <div
+                        style={{
+                          marginTop: 6,
+                          padding: '10px 14px',
+                          background: '#fff',
+                          borderRadius: 8,
+                          border: '1px solid #ffd6e7',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 12,
+                        }}
+                      >
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontWeight: 600, fontSize: 13, color: '#c41d7f' }}>
+                            Tải mô hình Kokoro (~85MB) về trình duyệt
+                          </div>
+                          <div style={{ fontSize: 11, color: '#8c8c8c' }}>
+                            Chỉ tải một lần duy nhất, mô hình được lưu vĩnh viễn trong CacheStorage.
+                          </div>
+                          {isDownloadingKokoro && (
+                            <Progress
+                              percent={kokoroProgress}
+                              size="small"
+                              status="active"
+                              strokeColor={{ from: '#eb2f96', to: '#722ed1' }}
+                              style={{ marginTop: 6 }}
+                            />
+                          )}
+                        </div>
+
+                        <Button
+                          type="primary"
+                          icon={isDownloadingKokoro ? <LoadingOutlined /> : <CloudDownloadOutlined />}
+                          loading={isDownloadingKokoro}
+                          onClick={() => {
+                            if (onDownloadKokoroModel) {
+                              onDownloadKokoroModel().then(() => {
+                                message.success('Đã nạp xong mô hình Kokoro vào máy!');
+                              }).catch(() => {
+                                message.error('Không thể tải mô hình Kokoro. Vui lòng thử lại!');
+                              });
+                            }
+                          }}
+                          style={{
+                            background: 'linear-gradient(135deg, #eb2f96 0%, #722ed1 100%)',
+                            border: 'none',
+                            fontWeight: 600,
+                            borderRadius: 6,
+                          }}
+                        >
+                          {isDownloadingKokoro ? `Đang tải ${kokoroProgress}%` : 'Tải mô hình (85MB)'}
+                        </Button>
+                      </div>
+                    )}
+                  </Space>
+                </Card>
+
+                <Input.Search
+                  placeholder="Tìm kiếm giọng Kokoro (Diễm Trinh, Mai Linh, Hưng Thịnh...)"
+                  allowClear
+                  value={kokoroSearch}
+                  onChange={(e) => setKokoroSearch(e.target.value)}
+                  style={{ borderRadius: 8 }}
+                />
+
+                <List
+                  dataSource={filteredKokoroVoices}
+                  renderItem={(voice) => {
+                    const isSelected = selectedVoiceURI === voice.id;
+                    const isPreviewing = previewingURI === voice.id;
+
+                    return (
+                      <List.Item
+                        key={voice.id}
+                        style={{
+                          padding: '12px 16px',
+                          borderRadius: 10,
+                          marginBottom: 8,
+                          background: isSelected ? '#fff0f6' : '#f8fafc',
+                          border: isSelected ? '1.5px solid #eb2f96' : '1px solid #f1f5f9',
+                          transition: 'all 0.2s ease',
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            width: '100%',
+                            gap: 12,
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
+                            <div
+                              style={{
+                                width: 42,
+                                height: 42,
+                                borderRadius: '50%',
+                                background: voice.gender === 'female' ? '#fff0f6' : '#e6f4ff',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                flexShrink: 0,
+                                border: `1.5px solid ${voice.gender === 'female' ? '#ffadd2' : '#91caff'}`,
+                              }}
+                            >
+                              {voice.gender === 'female' ? (
+                                <WomanOutlined style={{ color: '#eb2f96', fontSize: 20 }} />
+                              ) : (
+                                <ManOutlined style={{ color: '#1677ff', fontSize: 20 }} />
+                              )}
+                            </div>
+
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                <span style={{ fontWeight: 700, fontSize: 15, color: '#0f172a' }}>
+                                  {voice.name}
+                                </span>
+                                {voice.isRecommended && (
+                                  <Tag color="magenta" style={{ borderRadius: 8, fontWeight: 600 }}>
+                                    Khuyên dùng
+                                  </Tag>
+                                )}
+                                <Tag color={voice.color} style={{ borderRadius: 8, fontWeight: 500 }}>
+                                  {voice.badge}
+                                </Tag>
+                              </div>
+                              <div style={{ fontSize: 12, color: '#64748b', marginTop: 3, lineHeight: 1.4 }}>
+                                {voice.description}
+                              </div>
+                            </div>
+                          </div>
+
+                          <Space size={8} style={{ flexShrink: 0 }}>
+                            <Tooltip title="Nghe thử đoạn mẫu">
+                              <Button
+                                size="middle"
+                                icon={isPreviewing ? <LoadingOutlined /> : <PlayCircleOutlined />}
+                                onClick={() => handlePreviewKokoroVoice(voice)}
+                                loading={isPreviewing}
+                                style={{ borderRadius: 6 }}
+                              >
+                                Nghe thử
+                              </Button>
+                            </Tooltip>
+
+                            <Button
+                              type={isSelected ? 'primary' : 'default'}
+                              size="middle"
+                              icon={isSelected ? <CheckOutlined /> : undefined}
+                              onClick={() => handleSelectKokoroVoice(voice)}
                               style={{
                                 borderRadius: 6,
                                 fontWeight: 600,
                                 minWidth: 100,
+                                background: isSelected ? '#eb2f96' : undefined,
+                                borderColor: isSelected ? '#eb2f96' : undefined,
                               }}
                             >
                               {isSelected ? 'Đang chọn' : 'Chọn giọng'}
@@ -357,6 +642,159 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
               </div>
             ),
           },
+
+          // TAB 3: VIENEU-TTS (48KHZ ULTRA HD)
+          {
+            key: 'vieneu',
+            label: (
+              <span style={{ fontSize: 14, fontWeight: 600 }}>
+                🚀 VieNeu-TTS (48kHz Ultra HD)
+              </span>
+            ),
+            children: (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <Card
+                  size="small"
+                  style={{
+                    background: 'linear-gradient(135deg, #e6fffb 0%, #f0f5ff 100%)',
+                    borderColor: '#87e8de',
+                    borderRadius: 10,
+                  }}
+                >
+                  <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <FireFilled style={{ color: '#13c2c2', fontSize: 18 }} />
+                      <span style={{ fontWeight: 700, color: '#006d75', fontSize: 14 }}>
+                        VieNeu-TTS (48kHz Studio Master Audio)
+                      </span>
+                      <Tag color="cyan" style={{ borderRadius: 10, fontWeight: 600 }}>
+                        Độ phân giải 48kHz
+                      </Tag>
+                      <Tag color="geekblue" style={{ borderRadius: 10, fontWeight: 600 }}>
+                        Ngữ điệu biểu cảm
+                      </Tag>
+                    </div>
+                    <Text style={{ fontSize: 12, color: '#475569' }}>
+                      Công nghệ tổng hợp giọng nói tiếng Việt độ phân giải 48kHz cao nhất hiện nay, mô phỏng chính xác thanh điệu, dấu câu và cảm xúc người đọc sách chuyên nghiệp. Hỗ trợ hàng đợi Lookahead đệm trước câu tiếp theo với độ trễ chuyển đổi 0ms.
+                    </Text>
+                  </Space>
+                </Card>
+
+                <Input.Search
+                  placeholder="Tìm kiếm giọng VieNeu (Minh Quân, Phương Trang, Bảo Ngọc...)"
+                  allowClear
+                  value={vieneuSearch}
+                  onChange={(e) => setVieNeuSearch(e.target.value)}
+                  style={{ borderRadius: 8 }}
+                />
+
+                <List
+                  dataSource={filteredVieNeuVoices}
+                  renderItem={(voice) => {
+                    const isSelected = selectedVoiceURI === voice.id;
+                    const isPreviewing = previewingURI === voice.id;
+
+                    return (
+                      <List.Item
+                        key={voice.id}
+                        style={{
+                          padding: '12px 16px',
+                          borderRadius: 10,
+                          marginBottom: 8,
+                          background: isSelected ? '#e6fffb' : '#f8fafc',
+                          border: isSelected ? '1.5px solid #13c2c2' : '1px solid #f1f5f9',
+                          transition: 'all 0.2s ease',
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            width: '100%',
+                            gap: 12,
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
+                            <div
+                              style={{
+                                width: 42,
+                                height: 42,
+                                borderRadius: '50%',
+                                background: voice.gender === 'female' ? '#fff0f6' : '#e6f4ff',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                flexShrink: 0,
+                                border: `1.5px solid ${voice.gender === 'female' ? '#ffadd2' : '#91caff'}`,
+                              }}
+                            >
+                              {voice.gender === 'female' ? (
+                                <WomanOutlined style={{ color: '#eb2f96', fontSize: 20 }} />
+                              ) : (
+                                <ManOutlined style={{ color: '#1677ff', fontSize: 20 }} />
+                              )}
+                            </div>
+
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                <span style={{ fontWeight: 700, fontSize: 15, color: '#0f172a' }}>
+                                  {voice.name}
+                                </span>
+                                {voice.isRecommended && (
+                                  <Tag color="cyan" style={{ borderRadius: 8, fontWeight: 600 }}>
+                                    Khuyên dùng
+                                  </Tag>
+                                )}
+                                <Tag color={voice.color} style={{ borderRadius: 8, fontWeight: 500 }}>
+                                  {voice.badge}
+                                </Tag>
+                              </div>
+                              <div style={{ fontSize: 12, color: '#64748b', marginTop: 3, lineHeight: 1.4 }}>
+                                {voice.description}
+                              </div>
+                            </div>
+                          </div>
+
+                          <Space size={8} style={{ flexShrink: 0 }}>
+                            <Tooltip title="Nghe thử đoạn mẫu">
+                              <Button
+                                size="middle"
+                                icon={isPreviewing ? <LoadingOutlined /> : <PlayCircleOutlined />}
+                                onClick={() => handlePreviewVieNeuVoice(voice)}
+                                loading={isPreviewing}
+                                style={{ borderRadius: 6 }}
+                              >
+                                Nghe thử
+                              </Button>
+                            </Tooltip>
+
+                            <Button
+                              type={isSelected ? 'primary' : 'default'}
+                              size="middle"
+                              icon={isSelected ? <CheckOutlined /> : undefined}
+                              onClick={() => handleSelectVieNeuVoice(voice)}
+                              style={{
+                                borderRadius: 6,
+                                fontWeight: 600,
+                                minWidth: 100,
+                                background: isSelected ? '#13c2c2' : undefined,
+                                borderColor: isSelected ? '#13c2c2' : undefined,
+                              }}
+                            >
+                              {isSelected ? 'Đang chọn' : 'Chọn giọng'}
+                            </Button>
+                          </Space>
+                        </div>
+                      </List.Item>
+                    );
+                  }}
+                />
+              </div>
+            ),
+          },
+
+          // TAB 4: SYSTEM WEB SPEECH VOICES
           {
             key: 'system',
             label: (
@@ -374,7 +812,6 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                   style={{ borderRadius: 8 }}
                 />
 
-                {/* System Voices Search */}
                 <Input.Search
                   placeholder="Tìm kiếm giọng trình duyệt..."
                   allowClear
@@ -383,7 +820,6 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                   style={{ borderRadius: 8 }}
                 />
 
-                {/* Vietnamese System Voices */}
                 <div>
                   <div
                     style={{
@@ -448,7 +884,7 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                                 </div>
                               </Space>
 
-                              <Space size={6} style={{ flexShrink: 0 }}>
+                              <Space size={6}>
                                 <Button
                                   size="small"
                                   icon={isPreviewing ? <LoadingOutlined /> : <PlayCircleOutlined />}
@@ -462,7 +898,6 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                                   size="small"
                                   icon={isSelected ? <CheckOutlined /> : undefined}
                                   onClick={() => handleSelectSystemVoice(voice)}
-                                  style={{ fontWeight: 500 }}
                                 >
                                   {isSelected ? 'Đang chọn' : 'Chọn'}
                                 </Button>
@@ -475,27 +910,13 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                   )}
                 </div>
 
-                {/* Other Languages */}
                 {otherVoices.length > 0 && (
                   <div>
-                    <div
-                      style={{
-                        fontSize: 13,
-                        fontWeight: 600,
-                        color: '#475569',
-                        marginBottom: 8,
-                        marginTop: 8,
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 6,
-                      }}
-                    >
-                      <GlobalOutlined />
-                      <span>Giọng Đọc Quốc Tế Khác ({otherVoices.length})</span>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#475569', marginBottom: 8 }}>
+                      <GlobalOutlined style={{ marginRight: 6 }} /> Giọng Quốc Tế ({otherVoices.length})
                     </div>
-
                     <List
-                      dataSource={otherVoices.slice(0, 15)}
+                      dataSource={otherVoices.slice(0, 20)}
                       renderItem={(voice) => {
                         const isSelected = selectedVoiceURI === voice.voiceURI;
                         const isPreviewing = previewingURI === voice.voiceURI;
@@ -507,34 +928,25 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                               padding: '8px 12px',
                               borderRadius: 6,
                               marginBottom: 4,
-                              background: isSelected ? '#e6f4ff' : '#ffffff',
-                              border: '1px solid #f1f5f9',
+                              background: isSelected ? '#e6f4ff' : '#f8fafc',
                             }}
                           >
-                            <div
-                              style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'space-between',
-                                width: '100%',
-                              }}
-                            >
-                              <div>
-                                <span style={{ fontWeight: 500, fontSize: 13 }}>{voice.name}</span>
-                                <Tag style={{ marginLeft: 6, fontSize: 11 }}>{voice.lang}</Tag>
-                              </div>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                              <Space size={8}>
+                                {renderPlatformIcon(voice.name)}
+                                <span>{voice.name}</span>
+                                <Tag>{voice.lang}</Tag>
+                              </Space>
                               <Space size={6}>
                                 <Button
                                   size="small"
-                                  icon={<PlayCircleOutlined />}
+                                  icon={isPreviewing ? <LoadingOutlined /> : <PlayCircleOutlined />}
                                   onClick={() => handlePreviewSystemVoice(voice)}
                                   loading={isPreviewing}
-                                >
-                                  Thử
-                                </Button>
+                                />
                                 <Button
-                                  type={isSelected ? 'primary' : 'default'}
                                   size="small"
+                                  type={isSelected ? 'primary' : 'default'}
                                   onClick={() => handleSelectSystemVoice(voice)}
                                 >
                                   {isSelected ? 'Đang chọn' : 'Chọn'}

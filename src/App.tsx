@@ -63,6 +63,10 @@ export const App: React.FC = () => {
     startSleepTimer,
     cancelSleepTimer,
     previewVoice,
+    isKokoroReady,
+    kokoroProgress,
+    isDownloadingKokoro,
+    downloadKokoroModel,
   } = useTTS({
     onChapterComplete: handleChapterComplete,
     bookTitle: currentBook?.title,
@@ -245,6 +249,10 @@ export const App: React.FC = () => {
             voices={voices}
             vietnameseVoices={vietnameseVoices}
             onPreviewVoice={previewVoice}
+            isKokoroReady={isKokoroReady}
+            kokoroProgress={kokoroProgress}
+            isDownloadingKokoro={isDownloadingKokoro}
+            onDownloadKokoroModel={downloadKokoroModel}
           />
 
           {/* Mobile Bottom Sheet Voice Drawer */}
@@ -254,6 +262,10 @@ export const App: React.FC = () => {
             voices={voices}
             vietnameseVoices={vietnameseVoices}
             onPreviewVoice={previewVoice}
+            isKokoroReady={isKokoroReady}
+            kokoroProgress={kokoroProgress}
+            isDownloadingKokoro={isDownloadingKokoro}
+            onDownloadKokoroModel={downloadKokoroModel}
           />
         </div>
       </AntdApp>

@@ -1,10 +1,10 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { ReaderSettings, TTSEngineType } from '../types';
+import type { ReaderSettings, TTSEngineType, TTSEngineMode } from '../types';
 
 interface SettingsStore extends ReaderSettings {
   readingMode: 'continuous' | 'paginated';
-  engineMode: 'edge' | 'neural' | 'system';
+  engineMode: TTSEngineMode;
   ttsEngine: TTSEngineType;
   neuralSpeakerId: number;
   neuralModelDownloaded: boolean;
@@ -19,7 +19,7 @@ interface SettingsStore extends ReaderSettings {
   setAutoScroll: (autoScroll: boolean) => void;
   setHighlightSentence: (highlight: boolean) => void;
   setReadingMode: (mode: 'continuous' | 'paginated') => void;
-  setEngineMode: (mode: 'edge' | 'neural' | 'system') => void;
+  setEngineMode: (mode: TTSEngineMode) => void;
   setTtsEngine: (engine: TTSEngineType) => void;
   setNeuralSpeakerId: (speakerId: number) => void;
   setNeuralModelDownloaded: (ready: boolean) => void;
@@ -28,7 +28,7 @@ interface SettingsStore extends ReaderSettings {
 
 const defaultSettings: ReaderSettings & {
   readingMode: 'continuous' | 'paginated';
-  engineMode: 'edge' | 'neural' | 'system';
+  engineMode: TTSEngineMode;
   ttsEngine: TTSEngineType;
   neuralSpeakerId: number;
   neuralModelDownloaded: boolean;
@@ -62,7 +62,11 @@ export const useSettingsStore = create<SettingsStore>()(
       setSpeechPitch: (speechPitch) => set({ speechPitch }),
       setVolume: (volume) => set({ volume }),
       setSelectedVoiceURI: (selectedVoiceURI) => {
-        if (
+        if (selectedVoiceURI.startsWith('kokoro:')) {
+          set({ selectedVoiceURI, engineMode: 'kokoro', ttsEngine: 'kokoro' });
+        } else if (selectedVoiceURI.startsWith('vieneu:')) {
+          set({ selectedVoiceURI, engineMode: 'vieneu', ttsEngine: 'vieneu' });
+        } else if (
           selectedVoiceURI === 'vi-VN-HoaiMyNeural' ||
           selectedVoiceURI === 'vi-VN-NamMinhNeural' ||
           selectedVoiceURI.endsWith('Neural') ||
@@ -84,11 +88,16 @@ export const useSettingsStore = create<SettingsStore>()(
       setEngineMode: (engineMode) => {
         set({
           engineMode,
-          ttsEngine: engineMode === 'edge' ? 'edge' : engineMode === 'neural' ? 'neural' : 'system',
+          ttsEngine: engineMode as TTSEngineType,
         });
       },
       setTtsEngine: (ttsEngine) => {
-        const engineMode = ttsEngine === 'edge' ? 'edge' : (ttsEngine === 'neural_piper' || ttsEngine === 'neural') ? 'neural' : 'system';
+        const engineMode =
+          ttsEngine === 'webspeech'
+            ? 'system'
+            : ttsEngine === 'neural_piper'
+            ? 'neural'
+            : (ttsEngine as any);
         set({ ttsEngine, engineMode });
       },
       setNeuralSpeakerId: (neuralSpeakerId) => set({ neuralSpeakerId }),
