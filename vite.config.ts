@@ -9,6 +9,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // https://vite.dev/config/
 export default defineConfig({
+  // Relative asset URLs: the same build works at a domain root and under a sub-path (GitHub Pages)
+  base: './',
   plugins: [
     react(),
     {

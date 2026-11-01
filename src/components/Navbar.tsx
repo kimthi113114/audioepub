@@ -133,7 +133,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </Button>
         ) : (
           <Space align="center" size={6} style={{ flexShrink: 0 }}>
-            <img src="/favicon.svg" alt="" width={28} height={28} style={{ borderRadius: 8, display: 'block' }} />
+            <img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="" width={28} height={28} style={{ borderRadius: 8, display: 'block' }} />
             <Text
               strong
               style={{

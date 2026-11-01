@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:static": "node scripts/build-static.mjs",
     "lint": "oxlint src",
     "preview": "vite preview",
     "postinstall": "node scripts/patch-piper.js"

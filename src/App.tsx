@@ -82,6 +82,23 @@ export const App: React.FC = () => {
     bookCoverUrl: currentBook?.coverUrl,
   });
 
+  // Static hosting (e.g. GitHub Pages) has no /api/tts: probe once and fall back to an on-device voice
+  const [serverTTS, setServerTTS] = useState<boolean | null>(null);
+  useEffect(() => {
+    fetch('/api/tts?health=1')
+      .then((r) => r.ok && (r.headers.get('content-type') || '').includes('json'))
+      .catch(() => false)
+      .then((ok) => setServerTTS(ok));
+  }, []);
+
+  const { selectedVoiceURI, setSelectedVoiceURI } = useSettingsStore();
+  useEffect(() => {
+    if (serverTTS !== false || vietnameseVoices.length === 0) return;
+    if (voices.some((v) => v.voiceURI === selectedVoiceURI)) return; // already an on-device voice
+    setSelectedVoiceURI(vietnameseVoices[0].voiceURI);
+    message.info('Bản web tĩnh không có giọng AI từ server. Đã chuyển sang giọng Tiếng Việt của thiết bị.');
+  }, [serverTTS, vietnameseVoices, voices, selectedVoiceURI, setSelectedVoiceURI]);
+
   // Load books from IndexedDB
   const loadBooks = useCallback(async () => {
     try {

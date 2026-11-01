@@ -480,8 +480,8 @@ export function useTTS(
                 },
               ]
             : [
-                { src: `${window.location.origin}/icon-512.png`, sizes: '512x512', type: 'image/png' },
-                { src: `${window.location.origin}/icon-192.png`, sizes: '192x192', type: 'image/png' },
+                { src: new URL(`${import.meta.env.BASE_URL}icon-512.png`, document.baseURI).href, sizes: '512x512', type: 'image/png' },
+                { src: new URL(`${import.meta.env.BASE_URL}icon-192.png`, document.baseURI).href, sizes: '192x192', type: 'image/png' },
               ],
         });
       } catch (err) {
