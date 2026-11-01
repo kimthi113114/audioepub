@@ -113,7 +113,17 @@ export const App: React.FC = () => {
     style.setProperty('--shadow', p.shadow);
     style.colorScheme = theme === 'dark' ? 'dark' : 'light';
     document.body.className = `theme-${theme}`;
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', p.page);
+    // Safari ignores in-place changes of theme-color: replace the elements so the toolbar / status bar
+    // area (which is painted outside the page on iOS) follows the current theme
+    document.querySelectorAll('meta[name="theme-color"], meta[name="color-scheme"]').forEach((m) => m.remove());
+    const themeColor = document.createElement('meta');
+    themeColor.name = 'theme-color';
+    themeColor.content = p.page;
+    const colorScheme = document.createElement('meta');
+    colorScheme.name = 'color-scheme';
+    colorScheme.content = theme === 'dark' ? 'dark' : 'light';
+    document.head.append(themeColor, colorScheme);
+    style.backgroundColor = p.page;
   }, [theme]);
 
   // Handle select book to read

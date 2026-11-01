@@ -885,6 +885,14 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
     if (!rendition) return;
 
     try {
+      // epub.js never removes the style sheets of the themes it applied before, and equal-specificity
+      // rules are won by whichever sheet sits last in <head>. Drop the other themes' sheets first,
+      // otherwise going back to a theme that was used earlier keeps showing the newest one.
+      (rendition.getContents() as unknown as Array<{ document?: Document }>).forEach((contents) => {
+        (['light', 'sepia', 'dark'] as const)
+          .filter((name) => name !== theme)
+          .forEach((name) => contents.document?.getElementById(`epubjs-inserted-css-${name}`)?.remove());
+      });
       rendition.themes.select(theme);
       rendition.themes.fontSize(`${fontSize}px`);
       rendition.themes.override('line-height', `${lineHeight}`);
