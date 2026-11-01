@@ -110,13 +110,13 @@ export const Navbar: React.FC<NavbarProps> = ({
       }}
     >
       {/* Left: Brand or Back Button */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
         {currentBookTitle ? (
           <Button
             type="text"
             icon={<ArrowLeftOutlined />}
             onClick={onBackToShelf}
-            style={{ padding: '4px 8px' }}
+            style={{ padding: '4px 8px', flexShrink: 0 }}
           >
             Thư viện
           </Button>
@@ -141,7 +141,8 @@ export const Navbar: React.FC<NavbarProps> = ({
             ellipsis
             strong
             style={{
-              maxWidth: 'min(180px, 35vw)',
+              flex: 1,
+              minWidth: 0,
               fontSize: 14,
             }}
           >
