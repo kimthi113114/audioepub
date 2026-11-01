@@ -7,7 +7,7 @@ import { useTTS } from './hooks/useTTS';
 import { Navbar } from './components/Navbar';
 import { BookShelf } from './components/BookShelf';
 import { ReaderView, type ChapterControls } from './components/ReaderView';
-import { PlayerBar } from './components/PlayerBar';
+import { Player } from './components/Player';
 import { SleepTimerModal } from './components/SleepTimerModal';
 import { IOSGuideModal } from './components/iOSGuideModal';
 import { VoiceModal } from './components/VoiceModal';
@@ -23,6 +23,9 @@ export const App: React.FC = () => {
   const [isUploadModalOpen, setIsUploadModalOpen] = useState<boolean>(false);
   const [isVoiceModalOpen, setIsVoiceModalOpen] = useState<boolean>(false);
   const [isVoiceDrawerOpen, setIsVoiceDrawerOpen] = useState<boolean>(false);
+  const [chromeVisible, setChromeVisible] = useState<boolean>(true);
+  const [isPlayerSheetOpen, setIsPlayerSheetOpen] = useState<boolean>(false);
+  const [chapterInfo, setChapterInfo] = useState({ title: '', index: 0, total: 0 });
 
   const handleOpenVoiceSettings = useCallback(() => {
     if (typeof window !== 'undefined' && window.innerWidth < 768) {
@@ -49,7 +52,6 @@ export const App: React.FC = () => {
     playbackState,
     voices,
     vietnameseVoices,
-    currentSentence,
     currentSentenceIndex,
     sentences,
     sleepTimer,
@@ -96,11 +98,14 @@ export const App: React.FC = () => {
   // Handle select book to read
   const handleSelectBook = (book: Book) => {
     stop(); // stop any current speech
+    setChromeVisible(true);
+    setIsPlayerSheetOpen(false);
     setCurrentBook(book);
   };
 
   const handleBackToShelf = () => {
     stop();
+    setIsPlayerSheetOpen(false);
     setCurrentBook(null);
     loadBooks(); // refresh progress
   };
@@ -116,6 +121,36 @@ export const App: React.FC = () => {
     },
     [setSentencesList, play]
   );
+
+  // Listen mode is "on" whenever the player has something loaded/playing/paused
+  const playerActive = playbackState !== 'idle';
+
+  const startListen = useCallback(
+    (startIndex: number) => {
+      setChromeVisible(false);
+      play(sentences, startIndex);
+    },
+    [play, sentences]
+  );
+
+  // Reading: tap toggles the chrome. Listening: tapping a sentence jumps to it.
+  const handleSentenceTap = useCallback(
+    (index: number | null) => {
+      if (playerActive && index !== null) {
+        jumpToSentence(index);
+      } else {
+        setChromeVisible((v) => !v);
+      }
+    },
+    [playerActive, jumpToSentence]
+  );
+
+  const handleChapterChanged = useCallback((title: string, index: number, total: number) => {
+    setChapterInfo({ title, index, total });
+  }, []);
+
+  const barBg =
+    theme === 'dark' ? '#0f172a' : theme === 'sepia' ? '#fbf0d9' : '#ffffff';
 
   // Ant Design v5 Theme Configuration
   const getThemeConfig = () => {
@@ -167,6 +202,23 @@ export const App: React.FC = () => {
           }}
         >
           {/* Top Header Navbar */}
+          <div
+            style={
+              currentBook
+                ? {
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    zIndex: 50,
+                    background: barBg,
+                    transform: chromeVisible ? 'translateY(0)' : 'translateY(-100%)',
+                    transition: 'transform 0.2s ease',
+                    pointerEvents: chromeVisible ? 'auto' : 'none',
+                  }
+                : undefined
+            }
+          >
           <Navbar
             currentBookTitle={currentBook?.title}
             onBackToShelf={currentBook ? handleBackToShelf : undefined}
@@ -176,6 +228,7 @@ export const App: React.FC = () => {
             onOpenUpload={currentBook ? undefined : () => setIsUploadModalOpen(true)}
             sleepTimer={sleepTimer}
           />
+          </div>
 
           {/* Content View: Shelf or Reader */}
           <main
@@ -193,7 +246,12 @@ export const App: React.FC = () => {
                 book={currentBook}
                 currentSentenceIndex={currentSentenceIndex}
                 onSentencesReady={handleSentencesReady}
-                onSentenceClick={jumpToSentence}
+                onChapterChanged={handleChapterChanged}
+                onSentenceTap={handleSentenceTap}
+                onSentenceLongPress={startListen}
+                onStartListen={startListen}
+                chromeVisible={chromeVisible}
+                playerActive={playerActive}
                 registerChapterControls={(ctrls) => {
                   chapterControlsRef.current = ctrls;
                 }}
@@ -209,21 +267,29 @@ export const App: React.FC = () => {
             )}
           </main>
 
-          {/* Fixed Player Bar at bottom (visible when reading book) */}
-          {currentBook && (
-            <PlayerBar
+          {/* Listen mode: mini-player + full player sheet (only while audio is active) */}
+          {currentBook && playerActive && (
+            <Player
               playbackState={playbackState}
               onPlay={() => play()}
               onPause={pause}
-              onNext={nextSentence}
-              onPrev={prevSentence}
-              currentSentence={currentSentence}
-              currentSentenceIndex={currentSentenceIndex}
+              onNextSentence={nextSentence}
+              onPrevSentence={prevSentence}
+              onNextChapter={() => chapterControlsRef.current?.nextChapter()}
+              onPrevChapter={() => chapterControlsRef.current?.prevChapter()}
+              onClose={stop}
+              onOpenTimer={() => setIsTimerModalOpen(true)}
+              onOpenVoice={handleOpenVoiceSettings}
+              sheetOpen={isPlayerSheetOpen}
+              onSheetOpenChange={setIsPlayerSheetOpen}
+              chapterTitle={chapterInfo.title}
+              chapterIndex={chapterInfo.index}
+              totalChapters={chapterInfo.total}
+              sentenceIndex={currentSentenceIndex}
               totalSentences={sentences.length}
-              voices={voices}
-              vietnameseVoices={vietnameseVoices}
-              onOpenVoiceModal={() => setIsVoiceModalOpen(true)}
-              onOpenVoiceDrawer={() => setIsVoiceDrawerOpen(true)}
+              bookTitle={currentBook.title}
+              bookCoverUrl={currentBook.coverUrl}
+              sleepTimer={sleepTimer}
             />
           )}
 

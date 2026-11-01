@@ -1,12 +1,13 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import ePub, { type Book as EpubBook, type Rendition } from 'epubjs';
-import { Button, Drawer, List, Typography, Space, Tooltip, Input, message } from 'antd';
+import { Button, Drawer, List, Typography, Space, Input, message } from 'antd';
 import {
   UnorderedListOutlined,
   LeftOutlined,
   RightOutlined,
   BookOutlined,
   AimOutlined,
+  CustomerServiceOutlined,
 } from '@ant-design/icons';
 import type { Book, Chapter } from '../types';
 import { useSettingsStore } from '../store/useSettingsStore';
@@ -17,6 +18,7 @@ const { Text } = Typography;
 
 export interface ChapterControls {
   nextChapter: () => void;
+  getFirstVisibleSentence?: () => number;
   prevChapter: () => void;
   currentChapterIndex: number;
   totalChapters: number;
@@ -27,7 +29,12 @@ interface ReaderViewProps {
   currentSentenceIndex: number;
   onSentencesReady: (sentences: string[]) => void;
   onChapterChanged?: (title: string, index: number, total: number) => void;
-  onSentenceClick?: (index: number) => void;
+  /** Tap on text: sentence index, or null when tapping blank area */
+  onSentenceTap?: (index: number | null) => void;
+  onSentenceLongPress?: (index: number) => void;
+  onStartListen?: (startIndex: number) => void;
+  chromeVisible: boolean;
+  playerActive: boolean;
   registerChapterControls?: (controls: ChapterControls) => void;
 }
 
@@ -36,7 +43,11 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   currentSentenceIndex,
   onSentencesReady,
   onChapterChanged,
-  onSentenceClick,
+  onSentenceTap,
+  onSentenceLongPress,
+  onStartListen,
+  chromeVisible,
+  playerActive,
   registerChapterControls,
 }) => {
   const { theme, fontSize, lineHeight, fontFamily, readingMode, autoScroll, highlightSentence } =
@@ -51,6 +62,19 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   const [currentChapterTitle, setCurrentChapterTitle] = useState<string>('Đang mở sách...');
   const [isTocOpen, setIsTocOpen] = useState<boolean>(false);
   const [tocSearch, setTocSearch] = useState<string>('');
+
+  // Latest callbacks, read from iframe listeners that are bound once per render of a chapter
+  const tapRef = useRef(onSentenceTap);
+  const longPressRef = useRef(onSentenceLongPress);
+  const readingModeRef = useRef(readingMode);
+  useEffect(() => {
+    tapRef.current = onSentenceTap;
+    longPressRef.current = onSentenceLongPress;
+    readingModeRef.current = readingMode;
+  });
+
+  const barBg =
+    theme === 'dark' ? 'rgba(15,23,42,0.96)' : theme === 'sepia' ? 'rgba(251,240,217,0.96)' : 'rgba(255,255,255,0.96)';
 
   // References to rendered sentence elements for DOM highlighting
   const currentSentenceElementsRef = useRef<HTMLElement[]>([]);
@@ -99,17 +123,32 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     }
   }, [currentChapterIndex, chapters]);
 
+  // First sentence whose top edge is on screen (used to start listening where the user is reading)
+  const getFirstVisibleSentence = useCallback((): number => {
+    const container = viewerRef.current;
+    const iframe = container?.querySelector('iframe');
+    if (!container || !iframe) return 0;
+    const top = container.getBoundingClientRect().top;
+    const offset = iframe.getBoundingClientRect().top;
+    const elements = currentSentenceElementsRef.current;
+    for (let i = 0; i < elements.length; i++) {
+      if (elements[i].getBoundingClientRect().top + offset >= top) return i;
+    }
+    return 0;
+  }, []);
+
   // Register chapter controls with parent (App.tsx)
   useEffect(() => {
     if (registerChapterControls) {
       registerChapterControls({
         nextChapter: handleNextChapter,
         prevChapter: handlePrevChapter,
+        getFirstVisibleSentence,
         currentChapterIndex,
         totalChapters: chapters.length,
       });
     }
-  }, [registerChapterControls, handleNextChapter, handlePrevChapter, currentChapterIndex, chapters.length]);
+  }, [registerChapterControls, handleNextChapter, handlePrevChapter, getFirstVisibleSentence, currentChapterIndex, chapters.length]);
 
   // Tag individual sentences inside DOM for 1:1 TTS highlight & Click-to-speak
   const tagAndExtractSentences = useCallback((doc: Document): string[] => {
@@ -137,14 +176,6 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         span.dataset.ttsIdx = `${sentenceIndex}`;
         span.textContent = `${sentenceText} `;
 
-        // Click-to-Speak handler
-        span.addEventListener('click', (e) => {
-          e.stopPropagation();
-          if (onSentenceClick) {
-            onSentenceClick(sentenceIndex);
-          }
-        });
-
         block.appendChild(span);
         elements.push(span);
         allSentences.push(sentenceText);
@@ -153,7 +184,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
 
     currentSentenceElementsRef.current = elements;
     return allSentences;
-  }, [onSentenceClick]);
+  }, []);
 
   // 1. Initialize EPUB Book & Rendition (Strict Single Chapter Isolation)
   useEffect(() => {
@@ -231,7 +262,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
               'font-family': fontFamily,
               'font-size': `${fontSize}px`,
               'line-height': `${lineHeight}`,
-              padding: '20px 24px 40px',
+              padding: '20px 24px 120px',
             },
             '.tts-active-sentence': {
               'background-color': 'rgba(250, 204, 21, 0.45) !important',
@@ -251,7 +282,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
               'font-family': fontFamily,
               'font-size': `${fontSize}px`,
               'line-height': `${lineHeight}`,
-              padding: '20px 24px 40px',
+              padding: '20px 24px 120px',
             },
             '.tts-active-sentence': {
               'background-color': 'rgba(217, 119, 6, 0.35) !important',
@@ -271,7 +302,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
               'font-family': fontFamily,
               'font-size': `${fontSize}px`,
               'line-height': `${lineHeight}`,
-              padding: '20px 24px 40px',
+              padding: '20px 24px 120px',
             },
             '.tts-active-sentence': {
               'background-color': 'rgba(234, 179, 8, 0.35) !important',
@@ -302,6 +333,43 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
 
           const doc = view.document;
           const extractedSentences = tagAndExtractSentences(doc);
+
+          // Tap / long-press handling inside the chapter iframe
+          const sentenceOf = (target: EventTarget | null): number | null => {
+            const el = (target as HTMLElement | null)?.closest?.('.tts-sentence') as HTMLElement | null;
+            return el ? Number(el.dataset.ttsIdx) : null;
+          };
+          let pressTimer: number | undefined;
+          let longPressed = false;
+          const clearPress = () => {
+            if (pressTimer !== undefined) window.clearTimeout(pressTimer);
+            pressTimer = undefined;
+          };
+          doc.addEventListener('touchstart', (e: TouchEvent) => {
+            longPressed = false;
+            const idx = sentenceOf(e.target);
+            if (idx === null) return;
+            pressTimer = window.setTimeout(() => {
+              longPressed = true;
+              longPressRef.current?.(idx);
+            }, 550);
+          }, { passive: true });
+          doc.addEventListener('touchmove', clearPress, { passive: true });
+          doc.addEventListener('touchend', clearPress, { passive: true });
+          doc.addEventListener('click', (e: MouseEvent) => {
+            if (longPressed) {
+              longPressed = false;
+              return;
+            }
+            if (doc.getSelection()?.toString()) return;
+            if (readingModeRef.current === 'paginated' && renditionRef.current) {
+              const w = doc.documentElement.clientWidth || 1;
+              const ratio = (e.clientX % w) / w;
+              if (ratio < 0.25) return void renditionRef.current.prev();
+              if (ratio > 0.75) return void renditionRef.current.next();
+            }
+            tapRef.current?.(sentenceOf(e.target));
+          });
           onSentencesReady(extractedSentences);
 
           // Identify matching chapter index
@@ -415,18 +483,6 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     }
   };
 
-  const handleNextPage = () => {
-    if (renditionRef.current) {
-      renditionRef.current.next();
-    }
-  };
-
-  const handlePrevPage = () => {
-    if (renditionRef.current) {
-      renditionRef.current.prev();
-    }
-  };
-
   return (
     <div
       style={{
@@ -439,78 +495,41 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         overflow: 'hidden',
       }}
     >
-      {/* Chapter Sub-header Bar with Quick Chapter Controls */}
+      {/* Top chapter bar (overlay, shown with the chrome) */}
       <div
         style={{
+          position: 'absolute',
+          top: 'calc(56px + var(--sat, 0px))',
+          left: 0,
+          right: 0,
+          zIndex: 40,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '6px 12px',
-          background: 'rgba(0,0,0,0.02)',
-          borderBottom: '1px solid rgba(0,0,0,0.05)',
-          flexShrink: 0,
+          background: barBg,
+          borderBottom: '1px solid rgba(0,0,0,0.06)',
           gap: 8,
+          transform: chromeVisible ? 'translateY(0)' : 'translateY(-200%)',
+          opacity: chromeVisible ? 1 : 0,
+          pointerEvents: chromeVisible ? 'auto' : 'none',
+          transition: 'transform 0.2s ease, opacity 0.2s ease',
         }}
       >
-        <Space size={6} style={{ minWidth: 0, flex: 1 }}>
-          <Button
-            type="text"
-            size="small"
-            icon={<UnorderedListOutlined />}
-            onClick={() => setIsTocOpen(true)}
-          >
-            Mục lục
-          </Button>
-          <Text strong style={{ fontSize: 13 }} ellipsis>
-            {currentChapterTitle}
-          </Text>
-        </Space>
-
-        <Space size={2} style={{ flexShrink: 0 }}>
-          <Tooltip title="Chương trước">
-            <Button
-              type="text"
-              size="small"
-              icon={<LeftOutlined />}
-              disabled={currentChapterIndex <= 0}
-              onClick={handlePrevChapter}
-            />
-          </Tooltip>
-          <Text type="secondary" style={{ fontSize: 12, padding: '0 4px' }}>
-            {currentChapterIndex + 1}/{chapters.length || 1}
-          </Text>
-          <Tooltip title="Chương sau">
-            <Button
-              type="text"
-              size="small"
-              icon={<RightOutlined />}
-              disabled={currentChapterIndex >= chapters.length - 1}
-              onClick={handleNextChapter}
-            />
-          </Tooltip>
-
-          {readingMode === 'paginated' && (
-            <>
-              <span style={{ color: 'rgba(0,0,0,0.15)', margin: '0 2px' }}>|</span>
-              <Tooltip title="Trang trước">
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<LeftOutlined />}
-                  onClick={handlePrevPage}
-                />
-              </Tooltip>
-              <Tooltip title="Trang sau">
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<RightOutlined />}
-                  onClick={handleNextPage}
-                />
-              </Tooltip>
-            </>
-          )}
-        </Space>
+        <Button
+          type="text"
+          size="middle"
+          icon={<UnorderedListOutlined />}
+          onClick={() => setIsTocOpen(true)}
+        >
+          Mục lục
+        </Button>
+        <Text strong style={{ fontSize: 13, flex: 1, textAlign: 'center' }} ellipsis>
+          {currentChapterTitle}
+        </Text>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          {currentChapterIndex + 1}/{chapters.length || 1}
+        </Text>
       </div>
 
       {/* Main EPUB container */}
@@ -525,45 +544,66 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         }}
       />
 
-      {/* Bottom Chapter Navigation Bar (OOM Prevention UX: explicit chapter boundaries) */}
+      {/* Reading progress hairline (always visible) */}
       <div
-        className="chapter-bottom-nav"
         style={{
-          padding: '8px 16px',
-          background: theme === 'dark' ? '#141414' : '#fafafa',
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          height: 3,
+          width: `${chapters.length > 1 ? ((currentChapterIndex + 1) / chapters.length) * 100 : 0}%`,
+          background: '#1677ff',
+          zIndex: 30,
+          transition: 'width 0.3s ease',
+          pointerEvents: 'none',
+        }}
+      />
+
+      {/* Bottom bar (overlay, shown with the chrome while not listening) */}
+      <div
+        style={{
+          position: 'absolute',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          zIndex: 40,
+          padding: '10px 16px',
+          paddingBottom: 'calc(var(--sab, 0px) + 10px)',
+          background: barBg,
           borderTop: '1px solid rgba(0,0,0,0.06)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          flexShrink: 0,
-          zIndex: 10,
-          boxShadow: '0 -2px 8px rgba(0,0,0,0.03)',
+          gap: 12,
+          transform: chromeVisible && !playerActive ? 'translateY(0)' : 'translateY(200%)',
+          opacity: chromeVisible && !playerActive ? 1 : 0,
+          pointerEvents: chromeVisible && !playerActive ? 'auto' : 'none',
+          transition: 'transform 0.2s ease, opacity 0.2s ease',
         }}
       >
         <Button
+          size="large"
           icon={<LeftOutlined />}
           disabled={currentChapterIndex <= 0}
           onClick={handlePrevChapter}
-          size="middle"
-        >
-          Chương trước
-        </Button>
-
-        <div style={{ textAlign: 'center', maxWidth: '50%' }}>
-          <Text strong style={{ fontSize: 13, display: 'block' }} ellipsis>
-            Chương {currentChapterIndex + 1} / {chapters.length || 1}
-          </Text>
-        </div>
-
+          aria-label="Chương trước"
+        />
         <Button
           type="primary"
+          size="large"
+          icon={<CustomerServiceOutlined />}
+          onClick={() => onStartListen?.(getFirstVisibleSentence())}
+          style={{ flex: 1, height: 48, borderRadius: 24 }}
+        >
+          Nghe
+        </Button>
+        <Button
+          size="large"
           icon={<RightOutlined />}
           disabled={currentChapterIndex >= chapters.length - 1}
           onClick={handleNextChapter}
-          size="middle"
-        >
-          Chương sau
-        </Button>
+          aria-label="Chương sau"
+        />
       </div>
 
       {/* Table of Contents Drawer with Fast Search & Jump (1000 chapters support) */}
