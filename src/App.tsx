@@ -136,17 +136,14 @@ export const App: React.FC = () => {
     [play, sentences]
   );
 
-  // Reading: tap toggles the chrome. Listening: tapping a sentence jumps to it.
-  const handleSentenceTap = useCallback(
-    (index: number | null) => {
-      if (playerActive && index !== null) {
-        jumpToSentence(index);
-      } else {
-        setChromeVisible((v) => !v);
-      }
-    },
-    [playerActive, jumpToSentence]
-  );
+  // Tap toggles the chrome; while listening a double tap on a sentence jumps there (see ReaderView)
+  const handleSentenceTap = useCallback(() => {
+    setChromeVisible((v) => !v);
+  }, []);
+
+  const registerChapterControls = useCallback((ctrls: ChapterControls) => {
+    chapterControlsRef.current = ctrls;
+  }, []);
 
   const handleChapterChanged = useCallback((title: string, index: number, total: number) => {
     setChapterInfo({ title, index, total });
@@ -243,6 +240,9 @@ export const App: React.FC = () => {
               display: 'flex',
               flexDirection: 'column',
               overflow: 'hidden',
+              // Reserve room for the mini-player so it never covers the text
+              paddingBottom: currentBook && playerActive ? 'calc(64px + var(--sab, 0px))' : 0,
+              transition: 'padding-bottom 0.2s ease',
             }}
           >
             {currentBook ? (
@@ -253,12 +253,11 @@ export const App: React.FC = () => {
                 onChapterChanged={handleChapterChanged}
                 onSentenceTap={handleSentenceTap}
                 onSentenceLongPress={startListen}
+                onSentenceDoubleTap={jumpToSentence}
                 onStartListen={startListen}
                 chromeVisible={chromeVisible}
                 playerActive={playerActive}
-                registerChapterControls={(ctrls) => {
-                  chapterControlsRef.current = ctrls;
-                }}
+                registerChapterControls={registerChapterControls}
               />
             ) : (
               <BookShelf

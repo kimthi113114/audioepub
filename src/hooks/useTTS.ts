@@ -479,6 +479,8 @@ export function useTTS(
   const handleEngineFailure = useCallback(
     (idx: number, error: unknown, label: string) => {
       if (!isPlayingRef.current) return;
+      // play() interrupted by a newer load/pause (user jumped or paused): a newer playback already owns the audio
+      if ((error as { name?: string })?.name === 'AbortError') return;
       if ((error as { name?: string })?.name === 'NotAllowedError') {
         isPlayingRef.current = false;
         setPlaybackState('paused');
@@ -488,7 +490,7 @@ export function useTTS(
       failCountRef.current += 1;
       if (failCountRef.current >= 2) {
         failCountRef.current = 0;
-        const fallback = vietnameseVoices[0] || voices[0];
+        const fallback = vietnameseVoices[0]; // never fall back to a non-Vietnamese voice
         if (fallback && engineMode !== 'system') {
           message.warning(`Giọng ${label} đang lỗi, chuyển sang giọng trên máy.`);
           setSelectedVoiceURI(fallback.voiceURI);
@@ -560,15 +562,18 @@ export function useTTS(
         audio.volume = effectiveVolume;
 
         // Lookahead Prefetching: Start synthesizing next sentence (idx + 1) right away
-        const nextIdx = idx + 1;
-        if (nextIdx < list.length && list[nextIdx].trim()) {
-          queue
-            .prefetch(nextIdx, list[nextIdx].trim(), (txt) =>
-              fetchEdgeTTSBlob(txt, voice, speechRate, speechPitch)
-            )
-            .catch((err) => {
-              console.warn('[Edge Lookahead] Prefetch next sentence warning:', err);
-            });
+        // Keep two sentences ahead so network jitter never leaves a gap (also helps with the screen locked)
+        for (let ahead = 1; ahead <= 2; ahead++) {
+          const nextIdx = idx + ahead;
+          if (nextIdx < list.length && list[nextIdx].trim()) {
+            queue
+              .prefetch(nextIdx, list[nextIdx].trim(), (txt) =>
+                fetchEdgeTTSBlob(txt, voice, speechRate, speechPitch)
+              )
+              .catch((err) => {
+                console.warn('[Edge Lookahead] Prefetch warning:', err);
+              });
+          }
         }
 
         audio.onended = () => {

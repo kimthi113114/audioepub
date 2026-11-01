@@ -12,7 +12,7 @@ import {
 import type { Book, Chapter } from '../types';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { splitTextIntoSentences } from '../utils/epubHelper';
-import { db } from '../db';
+import { db, type BookWithResume } from '../db';
 
 const { Text } = Typography;
 
@@ -32,19 +32,22 @@ interface ReaderViewProps {
   /** Tap on text: sentence index, or null when tapping blank area */
   onSentenceTap?: (index: number | null) => void;
   onSentenceLongPress?: (index: number) => void;
+  /** Double tap on a sentence while listening: jump there */
+  onSentenceDoubleTap?: (index: number) => void;
   onStartListen?: (startIndex: number) => void;
   chromeVisible: boolean;
   playerActive: boolean;
   registerChapterControls?: (controls: ChapterControls) => void;
 }
 
-export const ReaderView: React.FC<ReaderViewProps> = ({
+const ReaderViewImpl: React.FC<ReaderViewProps> = ({
   book,
   currentSentenceIndex,
   onSentencesReady,
   onChapterChanged,
   onSentenceTap,
   onSentenceLongPress,
+  onSentenceDoubleTap,
   onStartListen,
   chromeVisible,
   playerActive,
@@ -66,13 +69,64 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   // Latest callbacks, read from iframe listeners that are bound once per render of a chapter
   const tapRef = useRef(onSentenceTap);
   const longPressRef = useRef(onSentenceLongPress);
+  const doubleTapRef = useRef(onSentenceDoubleTap);
+  const playerActiveRef = useRef(playerActive);
+  const lastTapRef = useRef<{ t: number; timer: number } | null>(null);
+
+  // While listening a single tap toggles the UI after a short wait; a second tap jumps to that sentence.
+  const dispatchTap = useCallback((idx: number | null) => {
+    if (!playerActiveRef.current || idx === null) {
+      tapRef.current?.(idx);
+      return;
+    }
+    const prev = lastTapRef.current;
+    if (prev && Date.now() - prev.t < 320) {
+      window.clearTimeout(prev.timer);
+      lastTapRef.current = null;
+      doubleTapRef.current?.(idx);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      lastTapRef.current = null;
+      tapRef.current?.(idx);
+    }, 320);
+    lastTapRef.current = { t: Date.now(), timer };
+  }, []);
   const readingModeRef = useRef(readingMode);
   const sentenceIdxRef = useRef(currentSentenceIndex);
   const keepSentenceRef = useRef<number | null>(null);
+  // Resume point: current chapter href + sentence index, written to IndexedDB (debounced)
+  const currentHrefRef = useRef<string | null>(null);
+  const resumeScrollRef = useRef<number | null>(null);
+  const pendingResumeRef = useRef<{ href: string; sentence: number } | null>(null);
+  const saveTimerRef = useRef<number | undefined>(undefined);
+
+  const flushResume = useCallback(() => {
+    window.clearTimeout(saveTimerRef.current);
+    const pending = pendingResumeRef.current;
+    pendingResumeRef.current = null;
+    if (!pending || !book.id) return;
+    db.books
+      .update(book.id, { resumeHref: pending.href, resumeSentence: pending.sentence, lastReadAt: new Date() })
+      .catch(() => {});
+  }, [book.id]);
+
+  const saveResume = useCallback(
+    (sentence: number) => {
+      const href = currentHrefRef.current;
+      if (!href || !book.id) return;
+      pendingResumeRef.current = { href, sentence };
+      window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = window.setTimeout(flushResume, 400);
+    },
+    [book.id, flushResume]
+  );
   const [renderTick, setRenderTick] = useState<number>(0);
   useEffect(() => {
     tapRef.current = onSentenceTap;
     longPressRef.current = onSentenceLongPress;
+    doubleTapRef.current = onSentenceDoubleTap;
+    playerActiveRef.current = playerActive;
     readingModeRef.current = readingMode;
     sentenceIdxRef.current = currentSentenceIndex;
   });
@@ -168,9 +222,9 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       const ratio = (clientX - wrap.getBoundingClientRect().left) / (wrap.clientWidth || 1);
       if (ratio < 0.25) return void renditionRef.current?.prev();
       if (ratio > 0.75) return void renditionRef.current?.next();
-      tapRef.current?.(sentenceAtPoint(clientX, clientY));
+      dispatchTap(sentenceAtPoint(clientX, clientY));
     },
-    [sentenceAtPoint]
+    [sentenceAtPoint, dispatchTap]
   );
 
   const onGestureStart = (e: React.TouchEvent) => {
@@ -351,8 +405,9 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
               'font-family': fontFamily,
               'font-size': `${fontSize}px`,
               'line-height': `${lineHeight}`,
-              padding: '20px 24px 120px',
+              padding: '20px 24px 56px',
               cursor: 'pointer',
+              'touch-action': 'manipulation',
             },
             '.tts-active-sentence': {
               'background-color': 'rgba(250, 204, 21, 0.45) !important',
@@ -362,6 +417,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             },
             '.tts-sentence': {
               cursor: 'pointer',
+              'touch-action': 'manipulation',
             },
           });
 
@@ -372,8 +428,9 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
               'font-family': fontFamily,
               'font-size': `${fontSize}px`,
               'line-height': `${lineHeight}`,
-              padding: '20px 24px 120px',
+              padding: '20px 24px 56px',
               cursor: 'pointer',
+              'touch-action': 'manipulation',
             },
             '.tts-active-sentence': {
               'background-color': 'rgba(217, 119, 6, 0.35) !important',
@@ -383,6 +440,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             },
             '.tts-sentence': {
               cursor: 'pointer',
+              'touch-action': 'manipulation',
             },
           });
 
@@ -393,8 +451,9 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
               'font-family': fontFamily,
               'font-size': `${fontSize}px`,
               'line-height': `${lineHeight}`,
-              padding: '20px 24px 120px',
+              padding: '20px 24px 56px',
               cursor: 'pointer',
+              'touch-action': 'manipulation',
             },
             '.tts-active-sentence': {
               'background-color': 'rgba(234, 179, 8, 0.35) !important',
@@ -405,6 +464,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             },
             '.tts-sentence': {
               cursor: 'pointer',
+              'touch-action': 'manipulation',
             },
           });
 
@@ -414,7 +474,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         }
 
         // Display at saved CFI or initial chapter
-        await rendition.display(book.currentCfi || undefined);
+        // display() runs after the 'rendered' listener below is attached (see end of initBook)
 
         // Handle section/chapter rendered (Extract sentences of ONLY current chapter)
         rendition.on('rendered', (section: any, view: any) => {
@@ -428,97 +488,114 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
 
           // A freshly rendered chapter scrolls programmatically; do not mistake that for the user
           lastAutoScrollAtRef.current = Date.now();
-          doc.addEventListener('scroll', () => onUserScrollRef.current(), { passive: true });
+          // epub.js may render the same document again (resize); bind listeners once per document
+          const docAny = doc as Document & { __ttsBound?: boolean };
+          if (!docAny.__ttsBound) {
+            docAny.__ttsBound = true;
+            doc.addEventListener('scroll', () => onUserScrollRef.current(), { passive: true });
 
-          // Tap / long-press handling inside the chapter iframe
-          const sentenceOf = (target: EventTarget | null): number | null => {
-            const el = (target as HTMLElement | null)?.closest?.('.tts-sentence') as HTMLElement | null;
-            return el ? Number(el.dataset.ttsIdx) : null;
-          };
-          let pressTimer: number | undefined;
-          let longPressed = false;
-          const clearPress = () => {
-            if (pressTimer !== undefined) window.clearTimeout(pressTimer);
-            pressTimer = undefined;
-          };
-          doc.addEventListener('touchstart', (e: TouchEvent) => {
-            longPressed = false;
-            const idx = sentenceOf(e.target);
-            if (idx === null) return;
-            pressTimer = window.setTimeout(() => {
-              longPressed = true;
-              longPressRef.current?.(idx);
-            }, 550);
-          }, { passive: true });
-          doc.addEventListener('touchmove', clearPress, { passive: true });
-          doc.addEventListener('touchend', clearPress, { passive: true });
-
-          // Horizontal swipe flips pages in paginated mode (left = next, right = previous)
-          let swipeStart: { x: number; y: number } | null = null;
-          doc.addEventListener('touchstart', (e: TouchEvent) => {
-            const t = e.touches[0];
-            swipeStart = t ? { x: t.clientX, y: t.clientY } : null;
-          }, { passive: true });
-          doc.addEventListener('touchend', (e: TouchEvent) => {
-            const start = swipeStart;
-            swipeStart = null;
-            const t = e.changedTouches[0];
-            if (!start || !t || readingModeRef.current !== 'paginated' || !renditionRef.current) return;
-            const dx = t.clientX - start.x;
-            const dy = t.clientY - start.y;
-            if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
-            longPressed = true; // swallow the synthetic click
-            if (dx < 0) renditionRef.current.next();
-            else renditionRef.current.prev();
-          }, { passive: true });
-          doc.addEventListener('keydown', (e: KeyboardEvent) => {
-            if (readingModeRef.current !== 'paginated' || !renditionRef.current) return;
-            if (e.key === 'ArrowRight') renditionRef.current.next();
-            if (e.key === 'ArrowLeft') renditionRef.current.prev();
-          });
-          const handleTap = (clientX: number, target: EventTarget | null) => {
-            if (doc.getSelection()?.toString()) return;
-            if (readingModeRef.current === 'paginated' && renditionRef.current) {
-              // In paginated flow the iframe spans every page; convert to coordinates of the visible page
-              const wrap = viewerRef.current;
-              const frame = wrap?.querySelector('iframe');
-              if (wrap && frame) {
-                const x = clientX + frame.getBoundingClientRect().left - wrap.getBoundingClientRect().left;
-                const ratio = x / (wrap.clientWidth || 1);
-                if (ratio < 0.25) return void renditionRef.current.prev();
-                if (ratio > 0.75) return void renditionRef.current.next();
-              }
-            }
-            tapRef.current?.(sentenceOf(target));
-          };
-
-          // iOS Safari only fires click on "clickable" elements, so also detect taps from touch events
-          let touchTap: { x: number; y: number; t: number } | null = null;
-          let lastTouchTapAt = 0;
-          doc.addEventListener('touchstart', (e: TouchEvent) => {
-            const t = e.touches[0];
-            touchTap = e.touches.length === 1 && t ? { x: t.clientX, y: t.clientY, t: Date.now() } : null;
-          }, { passive: true });
-          doc.addEventListener('touchend', (e: TouchEvent) => {
-            const start = touchTap;
-            touchTap = null;
-            const t = e.changedTouches[0];
-            if (!start || !t || longPressed) return;
-            if (Math.abs(t.clientX - start.x) > 10 || Math.abs(t.clientY - start.y) > 10) return;
-            if (Date.now() - start.t > 500) return;
-            lastTouchTapAt = Date.now();
-            handleTap(t.clientX, e.target);
-          }, { passive: true });
-
-          doc.addEventListener('click', (e: MouseEvent) => {
-            if (Date.now() - lastTouchTapAt < 700) return; // already handled via touch
-            if (longPressed) {
+            // Tap / long-press handling inside the chapter iframe
+            const sentenceOf = (target: EventTarget | null): number | null => {
+              const el = (target as HTMLElement | null)?.closest?.('.tts-sentence') as HTMLElement | null;
+              return el ? Number(el.dataset.ttsIdx) : null;
+            };
+            let pressTimer: number | undefined;
+            let longPressed = false;
+            const clearPress = () => {
+              if (pressTimer !== undefined) window.clearTimeout(pressTimer);
+              pressTimer = undefined;
+            };
+            doc.addEventListener('touchstart', (e: TouchEvent) => {
               longPressed = false;
-              return;
-            }
-            handleTap(e.clientX, e.target);
-          });
-          const keepIndex = keepSentenceRef.current ?? undefined;
+              const idx = sentenceOf(e.target);
+              if (idx === null) return;
+              pressTimer = window.setTimeout(() => {
+                longPressed = true;
+                longPressRef.current?.(idx);
+              }, 550);
+            }, { passive: true });
+            doc.addEventListener('touchmove', clearPress, { passive: true });
+            doc.addEventListener('touchend', clearPress, { passive: true });
+
+            // iOS Safari zooms on double tap: swallow the second tap's default action
+            let lastTouchEnd = 0;
+            doc.addEventListener('touchend', (e: TouchEvent) => {
+              const now = Date.now();
+              if (now - lastTouchEnd < 320 && e.cancelable) e.preventDefault();
+              lastTouchEnd = now;
+            }, { passive: false });
+
+            // Horizontal swipe flips pages in paginated mode (left = next, right = previous)
+            let swipeStart: { x: number; y: number } | null = null;
+            doc.addEventListener('touchstart', (e: TouchEvent) => {
+              const t = e.touches[0];
+              swipeStart = t ? { x: t.clientX, y: t.clientY } : null;
+            }, { passive: true });
+            doc.addEventListener('touchend', (e: TouchEvent) => {
+              const start = swipeStart;
+              swipeStart = null;
+              const t = e.changedTouches[0];
+              if (!start || !t || readingModeRef.current !== 'paginated' || !renditionRef.current) return;
+              const dx = t.clientX - start.x;
+              const dy = t.clientY - start.y;
+              if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+              longPressed = true; // swallow the synthetic click
+              if (dx < 0) renditionRef.current.next();
+              else renditionRef.current.prev();
+            }, { passive: true });
+            doc.addEventListener('keydown', (e: KeyboardEvent) => {
+              if (readingModeRef.current !== 'paginated' || !renditionRef.current) return;
+              if (e.key === 'ArrowRight') renditionRef.current.next();
+              if (e.key === 'ArrowLeft') renditionRef.current.prev();
+            });
+            const handleTap = (clientX: number, target: EventTarget | null) => {
+              if (doc.getSelection()?.toString()) return;
+              if (readingModeRef.current === 'paginated' && renditionRef.current) {
+                // In paginated flow the iframe spans every page; convert to coordinates of the visible page
+                const wrap = viewerRef.current;
+                const frame = wrap?.querySelector('iframe');
+                if (wrap && frame) {
+                  const x = clientX + frame.getBoundingClientRect().left - wrap.getBoundingClientRect().left;
+                  const ratio = x / (wrap.clientWidth || 1);
+                  if (ratio < 0.25) return void renditionRef.current.prev();
+                  if (ratio > 0.75) return void renditionRef.current.next();
+                }
+              }
+              dispatchTap(sentenceOf(target));
+            };
+
+            // iOS Safari only fires click on "clickable" elements, so also detect taps from touch events
+            let touchTap: { x: number; y: number; t: number } | null = null;
+            let lastTouchTapAt = 0;
+            doc.addEventListener('touchstart', (e: TouchEvent) => {
+              const t = e.touches[0];
+              touchTap = e.touches.length === 1 && t ? { x: t.clientX, y: t.clientY, t: Date.now() } : null;
+            }, { passive: true });
+            doc.addEventListener('touchend', (e: TouchEvent) => {
+              const start = touchTap;
+              touchTap = null;
+              const t = e.changedTouches[0];
+              if (!start || !t || longPressed) return;
+              if (Math.abs(t.clientX - start.x) > 10 || Math.abs(t.clientY - start.y) > 10) return;
+              if (Date.now() - start.t > 500) return;
+              lastTouchTapAt = Date.now();
+              handleTap(t.clientX, e.target);
+            }, { passive: true });
+
+            doc.addEventListener('click', (e: MouseEvent) => {
+              if (Date.now() - lastTouchTapAt < 700) return; // already handled via touch
+              if (longPressed) {
+                longPressed = false;
+                return;
+              }
+              handleTap(e.clientX, e.target);
+            });
+          }
+
+          // Same chapter rendered again (resize, mini-player docking, rotation): keep the spoken sentence
+          const sameChapter = !!section?.href && currentHrefRef.current === section.href;
+          if (section?.href) currentHrefRef.current = section.href;
+          const keepIndex = keepSentenceRef.current ?? (sameChapter ? sentenceIdxRef.current : undefined);
           keepSentenceRef.current = null;
           onSentencesReady(extractedSentences, keepIndex);
           setRenderTick((t) => t + 1);
@@ -558,6 +635,23 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             });
           }
         });
+        const startDisplay = async () => {
+          const resume = book as BookWithResume;
+          if (resume.resumeHref && typeof resume.resumeSentence === 'number') {
+            keepSentenceRef.current = resume.resumeSentence;
+            resumeScrollRef.current = resume.resumeSentence;
+            try {
+              await renditionRef.current?.display(resume.resumeHref);
+            } catch {
+              keepSentenceRef.current = null;
+              resumeScrollRef.current = null;
+              await renditionRef.current?.display(book.currentCfi || undefined);
+            }
+          } else {
+            await renditionRef.current?.display(book.currentCfi || undefined);
+          }
+        };
+        await startDisplay();
       } catch (err) {
         console.error('Error rendering book:', err);
         message.error('Lỗi khi nạp sách. Vui lòng thử lại!');
@@ -635,8 +729,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       if (!scroller) return;
 
       const containerRect = container.getBoundingClientRect();
-      const inset = playerActive ? 72 : 0;
-      const visibleH = Math.max(120, container.clientHeight - inset);
+      const visibleH = Math.max(120, container.clientHeight);
       const elTop = target.getBoundingClientRect().top + iframe.getBoundingClientRect().top - containerRect.top;
       const inBand = elTop >= visibleH * 0.1 && elTop <= visibleH * 0.65;
       if (inBand && !force) return;
@@ -644,11 +737,12 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       lastAutoScrollAtRef.current = Date.now();
       scroller.scrollTo({ top: Math.max(0, scroller.scrollTop + elTop - visibleH * 0.38), behavior: 'auto' });
     },
-    [currentSentenceIndex, playerActive]
+    [currentSentenceIndex]
   );
 
-  // Highlight active sentence & follow it
+  // Highlight active sentence & follow it (skipped while the page is hidden / screen locked)
   useEffect(() => {
+    if (typeof document !== 'undefined' && document.hidden) return;
     const iframe = viewerRef.current?.querySelector('iframe');
     const doc = iframe?.contentDocument || iframe?.contentWindow?.document;
     if (!doc) return;
@@ -659,9 +753,74 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
 
     const target = currentSentenceElementsRef.current[currentSentenceIndex];
     if (!target) return;
-    if (highlightSentence) target.classList.add('tts-active-sentence');
+    if (resumeScrollRef.current !== null && resumeScrollRef.current === currentSentenceIndex) {
+      resumeScrollRef.current = null;
+      scrollToCurrent(true);
+      return;
+    }
+    if (highlightSentence && playerActive) target.classList.add('tts-active-sentence');
     if (autoScroll && autoFollow && playerActive) scrollToCurrent(false);
   }, [currentSentenceIndex, highlightSentence, autoScroll, autoFollow, playerActive, scrollToCurrent, renderTick]);
+
+  // While listening, remember the spoken sentence; while reading, remember the first visible one
+  useEffect(() => {
+    if (playerActive) saveResume(currentSentenceIndex);
+  }, [playerActive, currentSentenceIndex, saveResume]);
+
+  useEffect(() => {
+    const container = viewerRef.current;
+    if (!container) return;
+    let timer: number | undefined;
+    const onScroll = () => {
+      if (playerActiveRef.current) return;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => saveResume(getFirstVisibleSentence()), 500);
+    };
+    container.addEventListener('scroll', onScroll, { passive: true, capture: true });
+    const onHide = () => flushResume();
+    window.addEventListener('pagehide', onHide);
+    document.addEventListener('visibilitychange', onHide);
+    return () => {
+      container.removeEventListener('scroll', onScroll, { capture: true });
+      window.removeEventListener('pagehide', onHide);
+      document.removeEventListener('visibilitychange', onHide);
+      window.clearTimeout(timer);
+      flushResume();
+    };
+  }, [saveResume, flushResume, getFirstVisibleSentence]);
+
+  // Resync highlight/scroll once the page becomes visible again
+  useEffect(() => {
+    const onVisible = () => {
+      if (!document.hidden) setRenderTick((t) => t + 1);
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, []);
+
+  // Re-layout the book when its box changes (mini-player docks, iOS toolbar collapses, rotation)
+  useEffect(() => {
+    const el = viewerRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    let timer: number | undefined;
+    let last = `${el.clientWidth}x${el.clientHeight}`;
+    const ro = new ResizeObserver(() => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        const size = `${el.clientWidth}x${el.clientHeight}`;
+        if (size === last) return;
+        last = size;
+        try {
+          renditionRef.current?.resize(el.clientWidth, el.clientHeight);
+        } catch {}
+      }, 150);
+    });
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      window.clearTimeout(timer);
+    };
+  }, []);
 
   // Manual scroll while listening pauses auto-follow (wrapper scroll + scroll inside the chapter iframe)
   const onUserScrollRef = useRef<() => void>(() => {});
@@ -783,7 +942,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           style={{
             position: 'absolute',
             right: 16,
-            bottom: 'calc(var(--sab, 0px) + 80px)',
+            bottom: 'calc(var(--sab, 0px) + 16px)',
             zIndex: 45,
             boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
           }}
@@ -959,3 +1118,5 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     </div>
   );
 };
+
+export const ReaderView = React.memo(ReaderViewImpl);
