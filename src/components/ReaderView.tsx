@@ -216,16 +216,26 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
     return hit ? Number(hit.dataset.ttsIdx) : null;
   }, []);
 
+  // Page turn: the wrapper animates scrollLeft (CSS scroll-behavior), so ignore taps until the slide ends
+  const lastFlipRef = useRef<number>(0);
+  const flipPage = useCallback((dir: 'next' | 'prev') => {
+    const now = Date.now();
+    if (now - lastFlipRef.current < 380) return;
+    lastFlipRef.current = now;
+    if (dir === 'next') void renditionRef.current?.next();
+    else void renditionRef.current?.prev();
+  }, []);
+
   const applyTap = useCallback(
     (clientX: number, clientY: number) => {
       const wrap = viewerRef.current;
       if (!wrap) return;
       const ratio = (clientX - wrap.getBoundingClientRect().left) / (wrap.clientWidth || 1);
-      if (ratio < 0.25) return void renditionRef.current?.prev();
-      if (ratio > 0.75) return void renditionRef.current?.next();
+      if (ratio < 0.25) return flipPage('prev');
+      if (ratio > 0.75) return flipPage('next');
       dispatchTap(sentenceAtPoint(clientX, clientY));
     },
-    [sentenceAtPoint, dispatchTap]
+    [sentenceAtPoint, dispatchTap, flipPage]
   );
 
   const onGestureStart = (e: React.TouchEvent) => {
@@ -260,8 +270,7 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
     const dx = t.clientX - g.x;
     const dy = t.clientY - g.y;
     if (Math.abs(dx) >= 50 && Math.abs(dx) >= Math.abs(dy) * 1.5) {
-      if (dx < 0) renditionRef.current?.next();
-      else renditionRef.current?.prev();
+      flipPage(dx < 0 ? 'next' : 'prev');
     } else if (Math.abs(dx) < 10 && Math.abs(dy) < 10 && Date.now() - g.t < 500) {
       applyTap(t.clientX, t.clientY);
     }
@@ -557,6 +566,15 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
           // Same chapter rendered again (resize, mini-player docking, rotation): keep the spoken sentence
           const sameChapter = !!section?.href && currentHrefRef.current === section.href;
           if (section?.href) currentHrefRef.current = section.href;
+          if (!sameChapter && readingModeRef.current === 'paginated') {
+            viewerRef.current?.animate(
+              [
+                { opacity: 0, transform: 'translateX(28px)' },
+                { opacity: 1, transform: 'translateX(0)' },
+              ],
+              { duration: 280, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' }
+            );
+          }
           const keepIndex = keepSentenceRef.current ?? (sameChapter ? sentenceIdxRef.current : undefined);
           keepSentenceRef.current = null;
           onSentencesReady(extractedSentences, keepIndex);
@@ -882,7 +900,7 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
       {/* Main EPUB container */}
       <div
         ref={viewerRef}
-        className="epub-viewer-wrapper"
+        className={`epub-viewer-wrapper${readingMode === 'paginated' ? ' paged' : ''}`}
         style={{
           flex: 1,
           width: '100%',
