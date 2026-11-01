@@ -146,6 +146,72 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     }
   }, [currentChapterIndex, chapters]);
 
+  // Paginated mode: a transparent layer in the parent document owns taps / swipes / long-press.
+  // (Touch events inside the epub iframe are unreliable on iOS Safari.)
+  const gestureRef = useRef<{ x: number; y: number; t: number; idx: number | null; long: boolean; timer?: number } | null>(null);
+  const lastGestureAtRef = useRef<number>(0);
+
+  const sentenceAtPoint = useCallback((clientX: number, clientY: number): number | null => {
+    const frame = viewerRef.current?.querySelector('iframe');
+    const doc = frame?.contentDocument;
+    if (!frame || !doc) return null;
+    const rect = frame.getBoundingClientRect();
+    const el = doc.elementFromPoint(clientX - rect.left, clientY - rect.top) as HTMLElement | null;
+    const hit = el?.closest?.('.tts-sentence') as HTMLElement | null;
+    return hit ? Number(hit.dataset.ttsIdx) : null;
+  }, []);
+
+  const applyTap = useCallback(
+    (clientX: number, clientY: number) => {
+      const wrap = viewerRef.current;
+      if (!wrap) return;
+      const ratio = (clientX - wrap.getBoundingClientRect().left) / (wrap.clientWidth || 1);
+      if (ratio < 0.25) return void renditionRef.current?.prev();
+      if (ratio > 0.75) return void renditionRef.current?.next();
+      tapRef.current?.(sentenceAtPoint(clientX, clientY));
+    },
+    [sentenceAtPoint]
+  );
+
+  const onGestureStart = (e: React.TouchEvent) => {
+    const t = e.touches[0];
+    if (!t || e.touches.length !== 1) return;
+    const idx = sentenceAtPoint(t.clientX, t.clientY);
+    const g = { x: t.clientX, y: t.clientY, t: Date.now(), idx, long: false } as NonNullable<typeof gestureRef.current>;
+    if (idx !== null) {
+      g.timer = window.setTimeout(() => {
+        g.long = true;
+        longPressRef.current?.(idx);
+      }, 550);
+    }
+    gestureRef.current = g;
+  };
+
+  const onGestureMove = (e: React.TouchEvent) => {
+    const g = gestureRef.current;
+    const t = e.touches[0];
+    if (!g || !t) return;
+    if (Math.abs(t.clientX - g.x) > 10 || Math.abs(t.clientY - g.y) > 10) window.clearTimeout(g.timer);
+  };
+
+  const onGestureEnd = (e: React.TouchEvent) => {
+    const g = gestureRef.current;
+    gestureRef.current = null;
+    const t = e.changedTouches[0];
+    if (!g || !t) return;
+    window.clearTimeout(g.timer);
+    lastGestureAtRef.current = Date.now();
+    if (g.long) return;
+    const dx = t.clientX - g.x;
+    const dy = t.clientY - g.y;
+    if (Math.abs(dx) >= 50 && Math.abs(dx) >= Math.abs(dy) * 1.5) {
+      if (dx < 0) renditionRef.current?.next();
+      else renditionRef.current?.prev();
+    } else if (Math.abs(dx) < 10 && Math.abs(dy) < 10 && Date.now() - g.t < 500) {
+      applyTap(t.clientX, t.clientY);
+    }
+  };
+
   // First sentence whose top edge is on screen (used to start listening where the user is reading)
   const getFirstVisibleSentence = useCallback((): number => {
     const container = viewerRef.current;
@@ -704,23 +770,6 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         }}
       />
 
-      {readingMode === 'paginated' && (
-        <>
-          <Button
-            aria-label="Trang trước"
-            icon={<LeftOutlined />}
-            onClick={() => renditionRef.current?.prev()}
-            style={{ position: 'absolute', left: 2, top: '50%', zIndex: 35, width: 30, height: 56, padding: 0, opacity: 0.4, borderRadius: 8 }}
-          />
-          <Button
-            aria-label="Trang sau"
-            icon={<RightOutlined />}
-            onClick={() => renditionRef.current?.next()}
-            style={{ position: 'absolute', right: 2, top: '50%', zIndex: 35, width: 30, height: 56, padding: 0, opacity: 0.4, borderRadius: 8 }}
-          />
-        </>
-      )}
-
       {playerActive && !autoFollow && (
         <Button
           type="primary"
@@ -741,6 +790,20 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         >
           Về câu đang đọc
         </Button>
+      )}
+
+      {readingMode === 'paginated' && (
+        <div
+          aria-hidden="true"
+          onTouchStart={onGestureStart}
+          onTouchMove={onGestureMove}
+          onTouchEnd={onGestureEnd}
+          onClick={(e) => {
+            if (Date.now() - lastGestureAtRef.current < 700) return;
+            applyTap(e.clientX, e.clientY);
+          }}
+          style={{ position: 'absolute', inset: 0, zIndex: 20, cursor: 'pointer', touchAction: 'none' }}
+        />
       )}
 
       {/* Reading progress hairline (always visible) */}
