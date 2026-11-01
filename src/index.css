@@ -93,12 +93,4 @@ body {
   overflow-x: hidden !important;
 }
 
-/* Paginated mode: pages glide instead of jumping (epub.js sets scrollLeft programmatically) */
-.epub-viewer-wrapper.paged .epub-container {
-  scroll-behavior: smooth;
-}
-@media (prefers-reduced-motion: reduce) {
-  .epub-viewer-wrapper.paged .epub-container {
-    scroll-behavior: auto;
-  }
-}
+/* Paginated page turns are animated with transforms in ReaderView (not scroll-behavior) */

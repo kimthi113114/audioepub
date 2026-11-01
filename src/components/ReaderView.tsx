@@ -216,23 +216,46 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
     return hit ? Number(hit.dataset.ttsIdx) : null;
   }, []);
 
-  // Page turn: the wrapper animates scrollLeft (CSS scroll-behavior), so ignore taps until the slide ends
-  const lastFlipRef = useRef<number>(0);
-  const flipPage = useCallback((dir: 'next' | 'prev') => {
-    const now = Date.now();
-    if (now - lastFlipRef.current < 380) return;
-    lastFlipRef.current = now;
-    if (dir === 'next') void renditionRef.current?.next();
-    else void renditionRef.current?.prev();
+  // Page-turn animation on the GPU: scrollLeft jumps instantly, then the (very wide) epub view is
+  // translated back by the distance travelled and eased to 0 — both pages are already in that view,
+  // so it reads as a slide. (CSS smooth scrolling runs on the main thread and stutters on phones.)
+  const slideFrom = useCallback((deltaPx: number) => {
+    const wrap = viewerRef.current?.querySelector('.epub-container') as HTMLElement | null;
+    const view = wrap?.querySelector('.epub-view') as HTMLElement | null;
+    if (!wrap || !view || !deltaPx) return;
+    if (Math.abs(deltaPx) > wrap.clientWidth * 1.6) return; // chapter change: handled by the fade-in
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+    view.style.willChange = 'transform';
+    const anim = view.animate(
+      [{ transform: `translate3d(${deltaPx}px, 0, 0)` }, { transform: 'translate3d(0, 0, 0)' }],
+      { duration: 320, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' }
+    );
+    anim.onfinish = anim.oncancel = () => {
+      view.style.willChange = '';
+    };
   }, []);
+
+  const lastFlipRef = useRef<number>(0);
+  const flipPage = useCallback(
+    async (dir: 'next' | 'prev') => {
+      const now = Date.now();
+      if (now - lastFlipRef.current < 340) return;
+      lastFlipRef.current = now;
+      const wrap = viewerRef.current?.querySelector('.epub-container') as HTMLElement | null;
+      const before = wrap?.scrollLeft ?? 0;
+      await (dir === 'next' ? renditionRef.current?.next() : renditionRef.current?.prev());
+      if (wrap) slideFrom(wrap.scrollLeft - before);
+    },
+    [slideFrom]
+  );
 
   const applyTap = useCallback(
     (clientX: number, clientY: number) => {
       const wrap = viewerRef.current;
       if (!wrap) return;
       const ratio = (clientX - wrap.getBoundingClientRect().left) / (wrap.clientWidth || 1);
-      if (ratio < 0.25) return flipPage('prev');
-      if (ratio > 0.75) return flipPage('next');
+      if (ratio < 0.25) return void flipPage('prev');
+      if (ratio > 0.75) return void flipPage('next');
       dispatchTap(sentenceAtPoint(clientX, clientY));
     },
     [sentenceAtPoint, dispatchTap, flipPage]
@@ -270,7 +293,7 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
     const dx = t.clientX - g.x;
     const dy = t.clientY - g.y;
     if (Math.abs(dx) >= 50 && Math.abs(dx) >= Math.abs(dy) * 1.5) {
-      flipPage(dx < 0 ? 'next' : 'prev');
+      void flipPage(dx < 0 ? 'next' : 'prev');
     } else if (Math.abs(dx) < 10 && Math.abs(dy) < 10 && Date.now() - g.t < 500) {
       applyTap(t.clientX, t.clientY);
     }
@@ -689,7 +712,9 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
         if (!force && viewLeft >= 0 && viewLeft < wrap.clientWidth) return;
         const delta = (renditionRef.current as any)?.manager?.layout?.delta || wrap.clientWidth;
         lastAutoScrollAtRef.current = Date.now();
+        const beforeLeft = wrap.scrollLeft;
         wrap.scrollTo({ left: Math.floor(docLeft / delta) * delta, behavior: 'auto' });
+        slideFrom(wrap.scrollLeft - beforeLeft);
         return;
       }
 
@@ -717,7 +742,7 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
       lastAutoScrollAtRef.current = Date.now();
       scroller.scrollTo({ top: Math.max(0, scroller.scrollTop + elTop - visibleH * 0.38), behavior: 'auto' });
     },
-    [currentSentenceIndex]
+    [currentSentenceIndex, slideFrom]
   );
 
   // Highlight active sentence & follow it (skipped while the page is hidden / screen locked)
