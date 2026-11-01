@@ -286,6 +286,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
               'font-size': `${fontSize}px`,
               'line-height': `${lineHeight}`,
               padding: '20px 24px 120px',
+              cursor: 'pointer',
             },
             '.tts-active-sentence': {
               'background-color': 'rgba(250, 204, 21, 0.45) !important',
@@ -306,6 +307,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
               'font-size': `${fontSize}px`,
               'line-height': `${lineHeight}`,
               padding: '20px 24px 120px',
+              cursor: 'pointer',
             },
             '.tts-active-sentence': {
               'background-color': 'rgba(217, 119, 6, 0.35) !important',
@@ -326,6 +328,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
               'font-size': `${fontSize}px`,
               'line-height': `${lineHeight}`,
               padding: '20px 24px 120px',
+              cursor: 'pointer',
             },
             '.tts-active-sentence': {
               'background-color': 'rgba(234, 179, 8, 0.35) !important',
@@ -407,24 +410,47 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             if (e.key === 'ArrowRight') renditionRef.current.next();
             if (e.key === 'ArrowLeft') renditionRef.current.prev();
           });
-          doc.addEventListener('click', (e: MouseEvent) => {
-            if (longPressed) {
-              longPressed = false;
-              return;
-            }
+          const handleTap = (clientX: number, target: EventTarget | null) => {
             if (doc.getSelection()?.toString()) return;
             if (readingModeRef.current === 'paginated' && renditionRef.current) {
               // In paginated flow the iframe spans every page; convert to coordinates of the visible page
               const wrap = viewerRef.current;
               const frame = wrap?.querySelector('iframe');
               if (wrap && frame) {
-                const x = e.clientX + frame.getBoundingClientRect().left - wrap.getBoundingClientRect().left;
+                const x = clientX + frame.getBoundingClientRect().left - wrap.getBoundingClientRect().left;
                 const ratio = x / (wrap.clientWidth || 1);
                 if (ratio < 0.25) return void renditionRef.current.prev();
                 if (ratio > 0.75) return void renditionRef.current.next();
               }
             }
-            tapRef.current?.(sentenceOf(e.target));
+            tapRef.current?.(sentenceOf(target));
+          };
+
+          // iOS Safari only fires click on "clickable" elements, so also detect taps from touch events
+          let touchTap: { x: number; y: number; t: number } | null = null;
+          let lastTouchTapAt = 0;
+          doc.addEventListener('touchstart', (e: TouchEvent) => {
+            const t = e.touches[0];
+            touchTap = e.touches.length === 1 && t ? { x: t.clientX, y: t.clientY, t: Date.now() } : null;
+          }, { passive: true });
+          doc.addEventListener('touchend', (e: TouchEvent) => {
+            const start = touchTap;
+            touchTap = null;
+            const t = e.changedTouches[0];
+            if (!start || !t || longPressed) return;
+            if (Math.abs(t.clientX - start.x) > 10 || Math.abs(t.clientY - start.y) > 10) return;
+            if (Date.now() - start.t > 500) return;
+            lastTouchTapAt = Date.now();
+            handleTap(t.clientX, e.target);
+          }, { passive: true });
+
+          doc.addEventListener('click', (e: MouseEvent) => {
+            if (Date.now() - lastTouchTapAt < 700) return; // already handled via touch
+            if (longPressed) {
+              longPressed = false;
+              return;
+            }
+            handleTap(e.clientX, e.target);
           });
           const keepIndex = keepSentenceRef.current ?? undefined;
           keepSentenceRef.current = null;
@@ -677,6 +703,23 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           position: 'relative',
         }}
       />
+
+      {readingMode === 'paginated' && (
+        <>
+          <Button
+            aria-label="Trang trước"
+            icon={<LeftOutlined />}
+            onClick={() => renditionRef.current?.prev()}
+            style={{ position: 'absolute', left: 2, top: '50%', zIndex: 35, width: 30, height: 56, padding: 0, opacity: 0.4, borderRadius: 8 }}
+          />
+          <Button
+            aria-label="Trang sau"
+            icon={<RightOutlined />}
+            onClick={() => renditionRef.current?.next()}
+            style={{ position: 'absolute', right: 2, top: '50%', zIndex: 35, width: 30, height: 56, padding: 0, opacity: 0.4, borderRadius: 8 }}
+          />
+        </>
+      )}
 
       {playerActive && !autoFollow && (
         <Button
