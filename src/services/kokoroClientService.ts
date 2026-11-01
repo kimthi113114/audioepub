@@ -1,4 +1,5 @@
 import type { KokoroVoiceItem } from '../types';
+import { apiUrl } from '../utils/apiBase';
 export type { KokoroVoiceItem };
 
 export const KOKORO_VOICES: KokoroVoiceItem[] = [
@@ -166,7 +167,7 @@ class KokoroClientService {
   public async isModelReady(): Promise<boolean> {
     if (this.isLoaded) return true;
     try {
-      const res = await fetch('/api/tts?health=1');
+      const res = await fetch(apiUrl('/api/tts?health=1'));
       if (res.ok) {
         const data = await res.json();
         if (data.kokoro_ready || data.worker || data.ok) {
@@ -207,7 +208,7 @@ class KokoroClientService {
       if (onProgress) onProgress(30);
 
       // Verify health check with server worker
-      const res = await fetch('/api/tts?health=1');
+      const res = await fetch(apiUrl('/api/tts?health=1'));
       if (res.ok) {
         const data = await res.json();
         if (data.kokoro_ready || data.ok) {
@@ -245,7 +246,7 @@ class KokoroClientService {
       throw new Error('Text cannot be empty');
     }
 
-    const response = await fetch('/api/tts', {
+    const response = await fetch(apiUrl('/api/tts'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

@@ -16,6 +16,7 @@ import { ReaderSettingsSheet } from './components/ReaderSettingsSheet';
 import { AudioLogModal } from './components/AudioLogModal';
 import { StorageModal } from './components/StorageModal';
 import { getPalette } from './theme/palettes';
+import { apiUrl } from './utils/apiBase';
 
 export const App: React.FC = () => {
   const { theme } = useSettingsStore();
@@ -85,7 +86,7 @@ export const App: React.FC = () => {
   // Static hosting (e.g. GitHub Pages) has no /api/tts: probe once and fall back to an on-device voice
   const [serverTTS, setServerTTS] = useState<boolean | null>(null);
   useEffect(() => {
-    fetch('/api/tts?health=1')
+    fetch(apiUrl('/api/tts?health=1'))
       .then((r) => r.ok && (r.headers.get('content-type') || '').includes('json'))
       .catch(() => false)
       .then((ok) => setServerTTS(ok));

@@ -1,4 +1,5 @@
 import type { VieNeuMode, VieNeuVoiceItem } from '../types';
+import { apiUrl } from '../utils/apiBase';
 import { useSettingsStore } from '../store/useSettingsStore';
 export type { VieNeuVoiceItem };
 
@@ -455,7 +456,7 @@ export async function fetchVieNeuTTSBlob(
     throw new Error('Text cannot be empty');
   }
 
-  const response = await fetch('/api/tts', {
+  const response = await fetch(apiUrl('/api/tts'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

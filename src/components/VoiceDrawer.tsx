@@ -35,6 +35,7 @@ import { formatVoiceInfo } from '../utils/voiceHelper';
 import { EDGE_VOICES, type EdgeVoice } from '../services/edgeTTSService';
 import { KOKORO_VOICES, type KokoroVoiceItem } from '../services/kokoroClientService';
 import { getVieNeuVoices, type VieNeuVoiceItem } from '../services/vieneuService';
+import { TTSServerSetting } from './TTSServerSetting';
 import { VieNeuModeSwitch } from './VieNeuModeSwitch';
 
 const { Text } = Typography;
@@ -279,6 +280,8 @@ export const VoiceDrawer: React.FC<VoiceDrawerProps> = ({
                     </Text>
                   </Space>
                 </Card>
+
+                <TTSServerSetting />
 
                 <Input.Search
                   placeholder="Tìm giọng (Hoài My, Nam Minh...)"

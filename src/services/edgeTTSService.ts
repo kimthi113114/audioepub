@@ -1,3 +1,5 @@
+import { apiUrl } from '../utils/apiBase';
+
 export interface EdgeVoice {
   id: string; // e.g. 'vi-VN-HoaiMyNeural'
   name: string; // 'Hoài My'
@@ -104,7 +106,7 @@ export async function fetchEdgeTTSBlob(
     throw new Error('Text to synthesize cannot be empty');
   }
 
-  const response = await fetch('/api/tts', {
+  const response = await fetch(apiUrl('/api/tts'), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

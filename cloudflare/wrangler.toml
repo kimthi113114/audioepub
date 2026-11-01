@@ -1,0 +1,7 @@
+name = "audioepub-tts"
+main = "edge-tts-worker.js"
+compatibility_date = "2025-01-01"
+
+[vars]
+# Sites allowed to call the proxy (comma separated, exact origins)
+ALLOWED_ORIGINS = "https://kimthi113114.github.io,http://localhost:5173,http://127.0.0.1:5173"
