@@ -573,6 +573,12 @@ export function useTTS(
       if (!isPlayingRef.current) return;
       // play() interrupted by a newer load/pause (user jumped or paused): a newer playback already owns the audio
       if ((error as { name?: string })?.name === 'AbortError') return;
+      if ((error as { message?: string })?.message === 'cancelled') {
+        // The queue was cleared while this sentence was being synthesised. If the user did not move on
+        // (same chapter re-rendered, mode change...), start it again; otherwise a newer play owns the audio.
+        if (isPlayingRef.current && currentSentenceIndexRef.current === idx) playCurrentSentenceRef.current();
+        return;
+      }
       if ((error as { name?: string })?.name === 'NotAllowedError') {
         isPlayingRef.current = false;
         setPlaybackState('paused');
@@ -832,15 +838,26 @@ export function useTTS(
         : 'minh_quan';
       const queue = lookaheadQueueRef.current;
 
-      try {
-        let blobUrl = '';
-        if (queue.hasReady(idx)) {
-          blobUrl = (await queue.get(idx)?.promise) || '';
-        } else {
-          blobUrl = await queue.prefetch(idx, textToSpeak, (txt) =>
-            fetchVieNeuTTSBlob(txt, voiceKey, speechRate, speechPitch)
-          );
+      // The current sentence and the next ones are synthesised in order, one at a time, so the model never
+      // works on a later sentence while the one we are waiting for is still pending.
+      const VIENEU_LOOKAHEAD = 4;
+      const kickLookahead = () => {
+        for (let ahead = 0; ahead <= VIENEU_LOOKAHEAD; ahead++) {
+          const i = idx + ahead;
+          if (i >= list.length || !list[i].trim()) continue;
+          queue
+            .prefetchSerial(i, list[i].trim(), (txt) =>
+              fetchVieNeuTTSBlob(txt, voiceKey, speechRate, speechPitch)
+            )
+            .catch((err) => {
+              if (err?.message !== 'cancelled') console.warn('[VieNeu Lookahead] Prefetch error:', err);
+            });
         }
+      };
+
+      try {
+        kickLookahead();
+        const blobUrl = (await queue.get(idx)?.promise) || '';
 
         if (!isPlayingRef.current) return;
 
@@ -861,17 +878,8 @@ export function useTTS(
         audio.playbackRate = speechRate;
         audio.volume = effectiveVolume;
 
-        // Lookahead Prefetching: Start synthesizing next sentence (idx + 1)
-        const nextIdx = idx + 1;
-        if (nextIdx < list.length && list[nextIdx].trim()) {
-          queue
-            .prefetch(nextIdx, list[nextIdx].trim(), (txt) =>
-              fetchVieNeuTTSBlob(txt, voiceKey, speechRate, speechPitch)
-            )
-            .catch((err) => {
-              console.warn('[VieNeu Lookahead] Prefetch error:', err);
-            });
-        }
+        // Slide the window: keep VIENEU_LOOKAHEAD sentences synthesised ahead
+        kickLookahead();
 
         audio.onended = () => {
           queue.revoke(idx);
@@ -1307,6 +1315,7 @@ export function useTTS(
 
   const prevSentence = useCallback(() => {
     const prevIdx = Math.max(0, currentSentenceIndexRef.current - 1);
+    lookaheadQueueRef.current.clear(); // going back: the queued sentences are for the wrong direction
     currentSentenceIndexRef.current = prevIdx;
     setCurrentSentenceIndex(prevIdx);
     if (isPlayingRef.current) {
@@ -1317,6 +1326,9 @@ export function useTTS(
   const jumpToSentence = useCallback(
     (index: number) => {
       const clamped = Math.max(0, Math.min(sentencesRef.current.length - 1, index));
+      // A jump outside the prefetched window: drop the queue so stale synthesis does not delay the new spot
+      const cur = currentSentenceIndexRef.current;
+      if (clamped < cur || clamped > cur + 5) lookaheadQueueRef.current.clear();
       currentSentenceIndexRef.current = clamped;
       setCurrentSentenceIndex(clamped);
       if (isPlayingRef.current) {
@@ -1404,16 +1416,18 @@ export function useTTS(
   }, [resume, pause, nextSentence, prevSentence]);
 
   // Seamless switch when selectedVoiceURI changes while playing
-  const prevVoiceRef = useRef<string>(selectedVoiceURI);
+  const vieneuMode = useSettingsStore((st) => st.vieneuMode);
+  const prevVoiceRef = useRef<string>(`${selectedVoiceURI}|${vieneuMode}`);
   useEffect(() => {
-    if (prevVoiceRef.current !== selectedVoiceURI) {
-      prevVoiceRef.current = selectedVoiceURI;
+    const key = `${selectedVoiceURI}|${vieneuMode}`;
+    if (prevVoiceRef.current !== key) {
+      prevVoiceRef.current = key;
       lookaheadQueueRef.current.clear();
       if (isPlayingRef.current) {
         playCurrentSentence();
       }
     }
-  }, [selectedVoiceURI, playCurrentSentence]);
+  }, [selectedVoiceURI, vieneuMode, playCurrentSentence]);
 
   // Rate and volume update for active HTML5 audio
   useEffect(() => {

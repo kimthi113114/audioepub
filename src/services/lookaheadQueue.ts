@@ -18,6 +18,27 @@ export class LookaheadQueue {
   private queue: Map<number, QueuedAudioItem> = new Map();
   public readonly maxLookaheadDepth: number = 2; // Prefetch up to 2 sentences ahead
   private activeBlobUrls: Set<string> = new Set();
+  // Serial executor for slow engines (VieNeu): one synthesis at a time so the sentence needed next
+  // is not slowed down by prefetches of later sentences. Bumped on clear() to drop queued work.
+  private serial: Promise<unknown> = Promise.resolve();
+  private generation = 0;
+
+  private enqueueSerial<T>(task: () => Promise<T>): Promise<T> {
+    const gen = this.generation;
+    const run = () => (gen !== this.generation ? Promise.reject(new Error('cancelled')) : task());
+    const p = this.serial.then(run, run);
+    this.serial = p.catch(() => undefined);
+    return p;
+  }
+
+  /** Like prefetch(), but synthesises strictly in call order, one request at a time. */
+  public prefetchSerial(
+    index: number,
+    text: string,
+    generator: (text: string) => Promise<Blob>
+  ): Promise<string> {
+    return this.prefetch(index, text, (t) => this.enqueueSerial(() => generator(t)));
+  }
 
   /**
    * Request prefetching of audio for sentence at `index`.
@@ -51,8 +72,10 @@ export class LookaheadQueue {
       status: 'generating',
     };
 
+    const gen = this.generation;
     const promise = generator(trimmed)
       .then((blob) => {
+        if (gen !== this.generation) throw new Error('cancelled'); // queue was cleared meanwhile
         const url = URL.createObjectURL(blob);
         item.blobUrl = url;
         item.status = 'ready';
@@ -137,5 +160,6 @@ export class LookaheadQueue {
     }
     this.activeBlobUrls.clear();
     this.queue.clear();
+    this.generation++;
   }
 }
