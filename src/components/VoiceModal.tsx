@@ -36,7 +36,8 @@ import { useSettingsStore } from '../store/useSettingsStore';
 import { formatVoiceInfo } from '../utils/voiceHelper';
 import { EDGE_VOICES, type EdgeVoice } from '../services/edgeTTSService';
 import { KOKORO_VOICES, type KokoroVoiceItem } from '../services/kokoroClientService';
-import { VIENEU_VOICES, type VieNeuVoiceItem } from '../services/vieneuService';
+import { getVieNeuVoices, type VieNeuVoiceItem } from '../services/vieneuService';
+import { VieNeuModeSwitch } from './VieNeuModeSwitch';
 
 const { Text } = Typography;
 
@@ -106,17 +107,19 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
   }, [kokoroSearch]);
 
   // Filter VieNeu Voices
+  const vieneuMode = useSettingsStore((st) => st.vieneuMode);
   const filteredVieNeuVoices = useMemo(() => {
-    if (!vieneuSearch.trim()) return VIENEU_VOICES;
+    const all = getVieNeuVoices(vieneuMode);
+    if (!vieneuSearch.trim()) return all;
     const q = vieneuSearch.toLowerCase().trim();
-    return VIENEU_VOICES.filter(
+    return all.filter(
       (v) =>
         v.name.toLowerCase().includes(q) ||
         v.region.toLowerCase().includes(q) ||
         v.badge.toLowerCase().includes(q) ||
         v.description.toLowerCase().includes(q)
     );
-  }, [vieneuSearch]);
+  }, [vieneuSearch, vieneuMode]);
 
   // Filter Web Speech voices
   const filteredSystemVNVoices = useMemo(() => {
@@ -680,8 +683,10 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                   </Space>
                 </Card>
 
+                <VieNeuModeSwitch />
+
                 <Input.Search
-                  placeholder="Tìm kiếm giọng VieNeu (Minh Quân, Phương Trang, Bảo Ngọc...)"
+                  placeholder="Tìm kiếm giọng VieNeu (Mai Anh, Thiện Minh, Ngọc Huyền...)"
                   allowClear
                   value={vieneuSearch}
                   onChange={(e) => setVieNeuSearch(e.target.value)}

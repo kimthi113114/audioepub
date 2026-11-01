@@ -1,9 +1,11 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { ReaderSettings, TTSEngineType, TTSEngineMode } from '../types';
+import type { ReaderSettings, TTSEngineType, TTSEngineMode, VieNeuMode } from '../types';
 
 interface SettingsStore extends ReaderSettings {
   readingMode: 'continuous' | 'paginated';
+  vieneuMode: VieNeuMode;
+  setVieneuMode: (mode: VieNeuMode) => void;
   engineMode: TTSEngineMode;
   ttsEngine: TTSEngineType;
   neuralSpeakerId: number;
@@ -28,6 +30,7 @@ interface SettingsStore extends ReaderSettings {
 
 const defaultSettings: ReaderSettings & {
   readingMode: 'continuous' | 'paginated';
+  vieneuMode: VieNeuMode;
   engineMode: TTSEngineMode;
   ttsEngine: TTSEngineType;
   neuralSpeakerId: number;
@@ -44,6 +47,7 @@ const defaultSettings: ReaderSettings & {
   autoScroll: true,
   highlightSentence: true,
   readingMode: 'continuous',
+  vieneuMode: 'v3nano',
   engineMode: 'edge',
   ttsEngine: 'edge',
   neuralSpeakerId: 0,
@@ -85,6 +89,7 @@ export const useSettingsStore = create<SettingsStore>()(
       setAutoScroll: (autoScroll) => set({ autoScroll }),
       setHighlightSentence: (highlightSentence) => set({ highlightSentence }),
       setReadingMode: (readingMode) => set({ readingMode }),
+      setVieneuMode: (vieneuMode) => set({ vieneuMode }),
       setEngineMode: (engineMode) => {
         set({
           engineMode,

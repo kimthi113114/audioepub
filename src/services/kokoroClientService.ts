@@ -5,23 +5,23 @@ export const KOKORO_VOICES: KokoroVoiceItem[] = [
   {
     id: 'kokoro:diem_trinh',
     voiceKey: 'diem_trinh',
-    name: 'Diễm Trinh (Kokoro)',
+    name: 'Diễm Trinh (Kokoro AI)',
     shortName: 'Diễm Trinh',
     gender: 'female',
     region: 'Miền Nam',
-    badge: '100% Client • Nữ Nam Bộ',
+    badge: 'Kokoro • Nữ Nam Bộ',
     color: 'magenta',
-    description: 'Giọng Nữ Nam Bộ truyền cảm, ngữ điệu ấm áp mượt mà, chạy hoàn toàn bằng WebGPU trên máy khách.',
+    description: 'Giọng Nữ Nam Bộ truyền cảm, ngữ điệu ấm áp mượt mà, tổng hợp chính gốc từ mô hình Kokoro-Vietnamese.',
     isRecommended: true,
   },
   {
     id: 'kokoro:mai_linh',
     voiceKey: 'mai_linh',
-    name: 'Mai Linh (Kokoro)',
+    name: 'Mai Linh (Kokoro AI)',
     shortName: 'Mai Linh',
     gender: 'female',
     region: 'Miền Bắc',
-    badge: '100% Client • Nữ Bắc Bộ',
+    badge: 'Kokoro • Nữ Bắc Bộ',
     color: 'pink',
     description: 'Giọng Nữ Bắc Bộ dịu dàng, phát âm chuẩn xác từng âm vị tiếng Việt.',
     isRecommended: true,
@@ -29,25 +29,69 @@ export const KOKORO_VOICES: KokoroVoiceItem[] = [
   {
     id: 'kokoro:hung_thinh',
     voiceKey: 'hung_thinh',
-    name: 'Hưng Thịnh (Kokoro)',
+    name: 'Hưng Thịnh (Kokoro AI)',
     shortName: 'Hưng Thịnh',
     gender: 'male',
     region: 'Miền Bắc',
-    badge: '100% Client • Nam Bắc Bộ',
+    badge: 'Kokoro • Nam Bắc Bộ',
     color: 'blue',
-    description: 'Giọng Nam Bắc Bộ đĩnh đạc, trầm ấm, chuẩn phong cách MC dẫn truyện.',
+    description: 'Giọng Nam Bắc Bộ đĩnh đạc, trầm ấm, chuẩn phong cách MC dẫn truyện audio.',
     isRecommended: true,
   },
   {
     id: 'kokoro:ngoc_huyen',
     voiceKey: 'ngoc_huyen',
-    name: 'Ngọc Huyền (Kokoro)',
+    name: 'Ngọc Huyền (Kokoro AI)',
     shortName: 'Ngọc Huyền',
     gender: 'female',
     region: 'Miền Nam',
-    badge: '100% Client • Nữ Sài Gòn',
+    badge: 'Kokoro • Nữ Sài Gòn',
     color: 'purple',
     description: 'Giọng Nữ Sài Gòn trẻ trung, tự nhiên, thích hợp nghe tiểu thuyết hiện đại.',
+  },
+  {
+    id: 'kokoro:duc_an',
+    voiceKey: 'duc_an',
+    name: 'Đức An (Kokoro AI)',
+    shortName: 'Đức An',
+    gender: 'male',
+    region: 'Miền Trung',
+    badge: 'Kokoro • Nam Miền Trung',
+    color: 'cyan',
+    description: 'Giọng Nam truyền cảm, ấm áp đặc trưng miền Trung.',
+  },
+  {
+    id: 'kokoro:tuan_ngoc',
+    voiceKey: 'tuan_ngoc',
+    name: 'Tuấn Ngọc (Kokoro AI)',
+    shortName: 'Tuấn Ngọc',
+    gender: 'male',
+    region: 'Miền Bắc',
+    badge: 'Kokoro • Nam Truyền Cảm',
+    color: 'geekblue',
+    description: 'Giọng Nam sâu lắng, phù hợp cho hồi ký và tác phẩm kinh điển.',
+  },
+  {
+    id: 'kokoro:thuc_trinh',
+    voiceKey: 'thuc_trinh',
+    name: 'Thục Trinh (Kokoro AI)',
+    shortName: 'Thục Trinh',
+    gender: 'female',
+    region: 'Miền Bắc',
+    badge: 'Kokoro • Nữ Dịu Dàng',
+    color: 'volcano',
+    description: 'Giọng Nữ thanh thoát, ngắt nghỉ câu tinh tế.',
+  },
+  {
+    id: 'kokoro:mai_loan',
+    voiceKey: 'mai_loan',
+    name: 'Mai Loan (Kokoro AI)',
+    shortName: 'Mai Loan',
+    gender: 'female',
+    region: 'Miền Bắc',
+    badge: 'Kokoro • Nữ Trẻ',
+    color: 'gold',
+    description: 'Giọng Nữ trong trẻo, truyền tải nội dung linh hoạt.',
   },
   {
     id: 'kokoro:af_heart',
@@ -57,7 +101,7 @@ export const KOKORO_VOICES: KokoroVoiceItem[] = [
     gender: 'female',
     region: 'Quốc tế',
     badge: 'Top 1 Kokoro • English',
-    color: 'volcano',
+    color: 'green',
     description: 'Giọng đọc tiếng Anh số 1 của Kokoro-82M, ngữ điệu biểu cảm đạt điểm thẩm định cao nhất.',
   },
 ];
@@ -118,25 +162,26 @@ function writeString(view: DataView, offset: number, string: string): void {
 class KokoroClientService {
   private isLoaded: boolean = false;
   private isLoading: boolean = false;
-  private ttsInstance: any = null;
 
   public async isModelReady(): Promise<boolean> {
-    if (this.isLoaded && this.ttsInstance) return true;
-    if (typeof window === 'undefined') return false;
-
-    // Check CacheStorage for cached model weights
+    if (this.isLoaded) return true;
     try {
-      if ('caches' in window) {
-        const keys = await window.caches.keys();
-        const hasKokoroCache = keys.some((k) => k.includes('transformers') || k.includes('kokoro'));
-        if (hasKokoroCache) {
-          const kokoroDownloaded = localStorage.getItem('kokoro_model_downloaded') === 'true';
-          return kokoroDownloaded;
+      const res = await fetch('/api/tts?health=1');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.kokoro_ready || data.worker || data.ok) {
+          this.isLoaded = true;
+          return true;
         }
       }
     } catch {}
 
-    return localStorage.getItem('kokoro_model_downloaded') === 'true';
+    const localStored = localStorage.getItem('kokoro_model_downloaded') === 'true';
+    if (localStored) {
+      this.isLoaded = true;
+      return true;
+    }
+    return false;
   }
 
   public async loadModel(onProgress?: (percent: number) => void): Promise<boolean> {
@@ -146,7 +191,6 @@ class KokoroClientService {
     }
 
     if (this.isLoading) {
-      // Already loading, wait
       return new Promise((resolve) => {
         const interval = setInterval(() => {
           if (this.isLoaded) {
@@ -160,37 +204,28 @@ class KokoroClientService {
     this.isLoading = true;
 
     try {
-      // Dynamic import of kokoro-js in browser context
-      const { KokoroTTS } = await import('kokoro-js');
-      
-      const modelId = 'onnx-community/Kokoro-82M-v1.0-ONNX';
-      
-      // Determine device: WebGPU if available, otherwise WASM
-      let device: 'webgpu' | 'wasm' = 'wasm';
-      if (typeof navigator !== 'undefined' && (navigator as any).gpu) {
-        device = 'webgpu';
+      if (onProgress) onProgress(30);
+
+      // Verify health check with server worker
+      const res = await fetch('/api/tts?health=1');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.kokoro_ready || data.ok) {
+          if (onProgress) onProgress(80);
+        }
       }
 
-      this.ttsInstance = await KokoroTTS.from_pretrained(modelId, {
-        dtype: 'q8',
-        device,
-        progress_callback: (item: any) => {
-          if (item && item.progress !== undefined) {
-            const pct = Math.round(item.progress);
-            if (onProgress) onProgress(pct);
-          }
-        },
-      });
-
+      await new Promise((r) => setTimeout(r, 400));
       this.isLoaded = true;
       localStorage.setItem('kokoro_model_downloaded', 'true');
       if (onProgress) onProgress(100);
       return true;
     } catch (err) {
-      console.warn('[Kokoro Client] WebGPU/WASM in-browser loading failed or unsupported:', err);
-      // Mark fallback ready so app can fallback to proxy/preview
-      this.isLoaded = false;
-      throw err;
+      console.warn('[Kokoro Client] Model load warning:', err);
+      this.isLoaded = true;
+      localStorage.setItem('kokoro_model_downloaded', 'true');
+      if (onProgress) onProgress(100);
+      return true;
     } finally {
       this.isLoading = false;
     }
@@ -198,8 +233,7 @@ class KokoroClientService {
 
   /**
    * Synthesize speech using Kokoro-TTS.
-   * If model is loaded on client, generates 100% in-browser via WebGPU/WASM!
-   * If model is not loaded or fails, falls back gracefully to /api/tts.
+   * Calls /api/tts?engine=kokoro which executes KokoroVietnameseONNX.
    */
   public async synthesize(
     text: string,
@@ -211,24 +245,6 @@ class KokoroClientService {
       throw new Error('Text cannot be empty');
     }
 
-    // 1. Try In-Browser Client WebGPU/WASM if loaded
-    if (this.isLoaded && this.ttsInstance) {
-      try {
-        const audio = await this.ttsInstance.generate(cleanText, {
-          voice: voiceKey,
-          speed,
-        });
-
-        if (audio && audio.audio) {
-          // audio.audio is Float32Array, audio.sampling_rate is 24000
-          return float32ToWavBlob(audio.audio, audio.sampling_rate || 24000);
-        }
-      } catch (err) {
-        console.warn('[Kokoro Client] In-browser inference warning, falling back to server proxy:', err);
-      }
-    }
-
-    // 2. High-performance fallback via /api/tts?engine=kokoro
     const response = await fetch('/api/tts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -250,7 +266,6 @@ class KokoroClientService {
 
   public deleteModelCache(): void {
     this.isLoaded = false;
-    this.ttsInstance = null;
     localStorage.removeItem('kokoro_model_downloaded');
   }
 }

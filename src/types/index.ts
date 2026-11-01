@@ -48,12 +48,15 @@ export interface KokoroVoiceItem {
   name: string;
   shortName: string;
   gender: 'female' | 'male';
-  region: 'Miền Nam' | 'Miền Bắc' | 'Quốc tế';
+  region: 'Miền Nam' | 'Miền Bắc' | 'Miền Trung' | 'Quốc tế';
   badge: string;
   color: string;
   description: string;
   isRecommended?: boolean;
 }
+
+/** VieNeu-TTS model: Turbo (48 kHz, heavier) or Nano (24 kHz, lighter) */
+export type VieNeuMode = 'v3turbo' | 'v3nano';
 
 export interface VieNeuVoiceItem {
   id: string; // e.g. 'vieneu:minh_quan'
@@ -61,7 +64,7 @@ export interface VieNeuVoiceItem {
   name: string;
   shortName: string;
   gender: 'female' | 'male';
-  region: 'Miền Bắc' | 'Miền Nam';
+  region: 'Miền Bắc' | 'Miền Nam' | 'Miền Trung';
   badge: string;
   color: string;
   description: string;

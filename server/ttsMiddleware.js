@@ -1,4 +1,6 @@
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
+import { spawn } from 'child_process';
+import path from 'path';
 
 // In-Memory LRU Cache for synthesized audio buffers
 const MAX_CACHE_ENTRIES = 800;
@@ -17,33 +19,81 @@ async function getTTSInstance(voiceName) {
   return tts;
 }
 
-// Kokoro in-memory instance for server-side acceleration
-let kokoroInstance = null;
-let kokoroLoading = false;
+// Local Python Worker Manager
+const WORKER_URL = 'http://127.0.0.1:5055';
+let workerStarting = false;
+let workerProcess = null;
 
-async function getKokoroInstance() {
-  if (kokoroInstance) return kokoroInstance;
-  if (kokoroLoading) {
-    while (kokoroLoading) {
-      await new Promise((r) => setTimeout(r, 200));
-    }
-    return kokoroInstance;
-  }
-  kokoroLoading = true;
+async function checkWorkerHealth() {
   try {
-    const { KokoroTTS } = await import('kokoro-js');
-    kokoroInstance = await KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX', {
-      dtype: 'q8',
-      device: 'cpu',
+    const res = await fetch(`${WORKER_URL}/health`, {
+      signal: AbortSignal.timeout(1200),
     });
-    return kokoroInstance;
-  } catch (err) {
-    console.warn('[Server Kokoro] Init notice:', err.message);
-    return null;
-  } finally {
-    kokoroLoading = false;
-  }
+    if (res.ok) {
+      const data = await res.json();
+      return data;
+    }
+  } catch {}
+  return null;
 }
+
+async function ensureWorkerRunning() {
+  const health = await checkWorkerHealth();
+  if (health) return true;
+
+  if (workerStarting) {
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => setTimeout(r, 600));
+      const h = await checkWorkerHealth();
+      if (h) return true;
+    }
+    return false;
+  }
+
+  workerStarting = true;
+  try {
+    console.log('[TTS Middleware] Launching local python TTS worker (server/tts_worker.py)...');
+    const workerScript = path.resolve(process.cwd(), 'server', 'tts_worker.py');
+    workerProcess = spawn('python', [workerScript], {
+      detached: true,
+      stdio: 'ignore',
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+    });
+    workerProcess.unref();
+
+    for (let i = 0; i < 35; i++) {
+      await new Promise((r) => setTimeout(r, 600));
+      const h = await checkWorkerHealth();
+      if (h) {
+        console.log('[TTS Middleware] Local python TTS worker is ready!');
+        workerStarting = false;
+        return true;
+      }
+    }
+  } catch (err) {
+    console.error('[TTS Middleware] Failed to spawn python TTS worker:', err);
+  } finally {
+    workerStarting = false;
+  }
+  return false;
+}
+
+// Ensure worker is checked/started at boot
+ensureWorkerRunning().catch(() => {});
+
+const KOKORO_VOICE_KEYS = [
+  'diem_trinh', 'mai_linh', 'hung_thinh', 'ngoc_huyen',
+  'duc_an', 'duc_duy', 'mai_loan', 'manh_dung',
+  'my_yen', 'phat_tai', 'storyvert', 'thanh_dat',
+  'thuc_trinh', 'tuan_ngoc'
+];
+
+const VIENEU_VOICE_KEYS = [
+  'minh_quan', 'ai_han', 'my_duyen', 'duc_tri',
+  'huu_quan', 'xuan_tien', 'mai_anh', 'truc_ly',
+  'anh_khoi', 'manh_dung', 'adam', 'phuong_trang',
+  'bao_ngoc', 'tuan_kiet'
+];
 
 export function createTTSMiddleware() {
   return async (req, res, next) => {
@@ -54,9 +104,24 @@ export function createTTSMiddleware() {
     }
 
     try {
+      // 0. Handle health query
+      if (url.searchParams.get('health') === '1') {
+        const health = await checkWorkerHealth();
+        res.setHeader('Content-Type', 'application/json');
+        return res.end(
+          JSON.stringify({
+            ok: true,
+            worker: !!health,
+            kokoro_ready: health?.kokoro_ready ?? false,
+            vieneu_ready: health?.vieneu_ready ?? false,
+          })
+        );
+      }
+
       let text = '';
       let voice = 'vi-VN-HoaiMyNeural';
       let engine = 'edge';
+      let mode = '';
       let rate = 1.0;
       let pitch = 1.0;
 
@@ -64,6 +129,7 @@ export function createTTSMiddleware() {
         text = url.searchParams.get('text') || '';
         voice = url.searchParams.get('voice') || 'vi-VN-HoaiMyNeural';
         engine = url.searchParams.get('engine') || 'edge';
+        mode = url.searchParams.get('mode') || '';
         rate = parseFloat(url.searchParams.get('rate') || '1.0');
         pitch = parseFloat(url.searchParams.get('pitch') || '1.0');
       } else if (req.method === 'POST') {
@@ -78,6 +144,7 @@ export function createTTSMiddleware() {
           text = data.text || '';
           voice = data.voice || 'vi-VN-HoaiMyNeural';
           engine = data.engine || 'edge';
+          mode = data.mode || '';
           rate = data.rate !== undefined ? parseFloat(data.rate) : 1.0;
           pitch = data.pitch !== undefined ? parseFloat(data.pitch) : 1.0;
         } catch {
@@ -95,7 +162,7 @@ export function createTTSMiddleware() {
       }
 
       // Check Cache
-      const cacheKey = `${engine}:${voice}:${rate.toFixed(2)}:${pitch.toFixed(2)}:${cleanText}`;
+      const cacheKey = `${engine}:${mode}:${voice}:${rate.toFixed(2)}:${pitch.toFixed(2)}:${cleanText}`;
       if (audioCache.has(cacheKey)) {
         const cached = audioCache.get(cacheKey);
         res.setHeader('Content-Type', cached.mimeType || 'audio/mpeg');
@@ -105,62 +172,77 @@ export function createTTSMiddleware() {
         return res.end(cached.buffer);
       }
 
-      // 1. Kokoro Direct Engine (English Top Voices)
-      if ((engine === 'kokoro' || voice.startsWith('kokoro:')) && voice.includes('heart')) {
-        const ktts = await getKokoroInstance();
-        if (ktts) {
-          const kokoroAudio = await ktts.generate(cleanText, {
-            voice: 'af_heart',
-            speed: rate,
+      // 1. Determine target engine
+      const voiceLower = voice.toLowerCase().trim();
+      // An explicit engine wins: voice ids can collide between engines (e.g. "ngoc_huyen")
+      const isKokoro =
+        engine === 'kokoro' ||
+        (engine !== 'vieneu' &&
+          (voiceLower.startsWith('kokoro:') ||
+            KOKORO_VOICE_KEYS.some((k) => voiceLower === k || voiceLower === `kokoro:${k}`)));
+
+      const isVieNeu =
+        !isKokoro &&
+        (engine === 'vieneu' ||
+          voiceLower.startsWith('vieneu:') ||
+          VIENEU_VOICE_KEYS.some((k) => voiceLower === k || voiceLower === `vieneu:${k}`));
+
+      // Handle Kokoro or VieNeu via local Python worker
+      if (isKokoro || isVieNeu) {
+        const workerReady = await ensureWorkerRunning();
+        if (workerReady) {
+          const reqEngine = isKokoro ? 'kokoro' : 'vieneu';
+          let reqVoice = voiceLower.replace(/^(kokoro|vieneu):/, '');
+
+          const resp = await fetch(`${WORKER_URL}/tts`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              text: cleanText,
+              engine: reqEngine,
+              voice: reqVoice,
+              speed: rate,
+              mode: isVieNeu && mode ? mode : undefined,
+            }),
           });
-          const rawBuf = Buffer.from(
-            kokoroAudio.toBlob().arrayBuffer
-              ? await kokoroAudio.toBlob().arrayBuffer()
-              : kokoroAudio.audio.buffer
-          );
-          audioCache.set(cacheKey, { buffer: rawBuf, mimeType: 'audio/wav' });
-          res.setHeader('Content-Type', 'audio/wav');
-          res.setHeader('Content-Length', rawBuf.length);
-          res.setHeader('X-Cache', 'MISS');
-          return res.end(rawBuf);
+
+          if (resp.ok) {
+            const arrBuf = await resp.arrayBuffer();
+            const rawBuf = Buffer.from(arrBuf);
+
+            // Put in cache
+            if (audioCache.size >= MAX_CACHE_ENTRIES) {
+              const firstKey = audioCache.keys().next().value;
+              audioCache.delete(firstKey);
+            }
+            audioCache.set(cacheKey, { buffer: rawBuf, mimeType: 'audio/wav' });
+
+            res.setHeader('Content-Type', 'audio/wav');
+            res.setHeader('Content-Length', rawBuf.length);
+            res.setHeader('X-Cache', 'MISS');
+            res.setHeader('Cache-Control', 'public, max-age=86400');
+            return res.end(rawBuf);
+          } else {
+            const errStr = await resp.text();
+            console.error(`[TTS Worker] Error response (${resp.status}):`, errStr);
+          }
+        } else {
+          console.warn('[TTS Middleware] Worker not available for Kokoro/VieNeu');
         }
       }
 
-      // 2. Map Voice for VieNeu and Kokoro Vietnamese to optimized neural profiles
+      // 2. Microsoft Studio / Edge-TTS Engine (Hoài My, Nam Minh, Jenny)
       let targetEdgeVoice = 'vi-VN-HoaiMyNeural';
-      let effectiveRate = rate;
-      let effectivePitch = pitch;
-
-      if (voice === 'kokoro:diem_trinh' || voice === 'diem_trinh') {
-        targetEdgeVoice = 'vi-VN-HoaiMyNeural';
-        effectivePitch = 1.03; // slightly warmer
-      } else if (voice === 'kokoro:mai_linh' || voice === 'mai_linh') {
-        targetEdgeVoice = 'vi-VN-NamMinhNeural';
-        effectivePitch = 1.25; // northern melodic
-      } else if (voice === 'kokoro:hung_thinh' || voice === 'hung_thinh') {
-        targetEdgeVoice = 'vi-VN-NamMinhNeural';
-        effectivePitch = 0.95; // deep narrative
-      } else if (voice === 'kokoro:ngoc_huyen' || voice === 'ngoc_huyen') {
-        targetEdgeVoice = 'vi-VN-HoaiMyNeural';
-        effectiveRate = 1.05;
-      } else if (voice === 'vieneu:minh_quan' || voice === 'minh_quan') {
-        targetEdgeVoice = 'vi-VN-NamMinhNeural';
-        effectivePitch = 0.98; // broadcast announcer
-      } else if (voice === 'vieneu:phuong_trang' || voice === 'phuong_trang') {
-        targetEdgeVoice = 'vi-VN-HoaiMyNeural';
-        effectivePitch = 1.08;
-      } else if (voice === 'vieneu:bao_ngoc' || voice === 'bao_ngoc') {
-        targetEdgeVoice = 'vi-VN-HoaiMyNeural';
-        effectivePitch = 0.96;
-      } else if (voice.startsWith('vi-') || voice.startsWith('en-') || voice.endsWith('Neural')) {
+      if (voice.startsWith('vi-') || voice.startsWith('en-') || voice.endsWith('Neural')) {
         targetEdgeVoice = voice;
+      } else if (voiceLower.includes('nam') || voiceLower.includes('minh')) {
+        targetEdgeVoice = 'vi-VN-NamMinhNeural';
       }
 
-      // Format Prosody
-      const ratePercent = Math.round((effectiveRate - 1.0) * 100);
+      const ratePercent = Math.round((rate - 1.0) * 100);
       const rateStr = ratePercent >= 0 ? `+${ratePercent}%` : `${ratePercent}%`;
 
-      const pitchHz = Math.round((effectivePitch - 1.0) * 50);
+      const pitchHz = Math.round((pitch - 1.0) * 50);
       const pitchStr = pitchHz >= 0 ? `+${pitchHz}Hz` : `${pitchHz}Hz`;
 
       const tts = await getTTSInstance(targetEdgeVoice);
@@ -189,17 +271,17 @@ export function createTTSMiddleware() {
       });
 
       audioStream.on('error', (err) => {
-        console.error('[TTS API Error]:', err);
+        console.error('Edge-TTS stream error:', err);
         if (!res.headersSent) {
           res.statusCode = 500;
-          res.end(JSON.stringify({ error: err.message }));
+          res.end(`TTS generation failed: ${err.message}`);
         }
       });
     } catch (err) {
-      console.error('[TTS Handler Exception]:', err);
+      console.error('TTS Middleware internal error:', err);
       if (!res.headersSent) {
         res.statusCode = 500;
-        res.end(JSON.stringify({ error: err.message }));
+        res.end(`Internal server error: ${err.message}`);
       }
     }
   };
