@@ -30,10 +30,42 @@ import {
   type VieNeuVoiceItem,
 } from '../services/vieneuService';
 import { LookaheadQueue } from '../services/lookaheadQueue';
+import { logAudio } from '../utils/audioDebugLog';
 
-// Silent 1-second MP3 data URI to keep iOS Safari background audio alive in system Web Speech mode
-const SILENT_AUDIO_URI =
-  'data:audio/mp3;base64,//uQxAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAACAAABhACfn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn5+fn58AAAAATGFtZTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV';
+
+// A valid 1s mono PCM WAV that is silent but not all zeros (some engines skip pure digital silence)
+const makeSilentWavUrl = (): string => {
+  const sampleRate = 8000;
+  const samples = sampleRate;
+  const buf = new ArrayBuffer(44 + samples * 2);
+  const v = new DataView(buf);
+  const str = (o: number, t: string) => {
+    for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i));
+  };
+  str(0, 'RIFF');
+  v.setUint32(4, 36 + samples * 2, true);
+  str(8, 'WAVE');
+  str(12, 'fmt ');
+  v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true);
+  v.setUint16(22, 1, true);
+  v.setUint32(24, sampleRate, true);
+  v.setUint32(28, sampleRate * 2, true);
+  v.setUint16(32, 2, true);
+  v.setUint16(34, 16, true);
+  str(36, 'data');
+  v.setUint32(40, samples * 2, true);
+  for (let i = 0; i < samples; i += 50) v.setInt16(44 + i * 2, 1, true);
+  return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+};
+
+// iOS 16.4+: declare this page as media playback so audio survives the silent switch and screen lock
+const setPlaybackAudioSession = () => {
+  try {
+    const session = (navigator as unknown as { audioSession?: { type: string } }).audioSession;
+    if (session) session.type = 'playback';
+  } catch {}
+};
 
 export interface UseTTSReturn {
   playbackState: PlaybackState;
@@ -314,7 +346,9 @@ export function useTTS(
     if (typeof window === 'undefined') return;
 
     // Silent audio element for iOS Safari background keep-alive in system mode
-    const silentAudio = new Audio(SILENT_AUDIO_URI);
+    setPlaybackAudioSession();
+    const silentUrl = makeSilentWavUrl();
+    const silentAudio = new Audio(silentUrl);
     silentAudio.loop = true;
     silentAudio.setAttribute('playsinline', 'true');
     (silentAudio as any).playsInline = true;
@@ -326,21 +360,63 @@ export function useTTS(
     (neuralAudio as any).playsInline = true;
     neuralAudioRef.current = neuralAudio;
 
-    // OS-level interruption (call, Siri, headphones unplugged): reflect it instead of staying "playing"
-    const onSystemPause = () => {
-      if (!isPlayingRef.current || neuralAudio.ended || !neuralAudio.src) return;
+    const markPaused = () => {
       isPlayingRef.current = false;
       setPlaybackState('paused');
       try {
         if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
       } catch {}
     };
+
+    // OS-level interruption (call, Siri, screen lock, headphones unplugged)
+    const onSystemPause = () => {
+      logAudio('audio.pause', `hidden=${document.hidden} ended=${neuralAudio.ended}`);
+      if (!isPlayingRef.current || neuralAudio.ended || !neuralAudio.src) return;
+      if (document.hidden) {
+        // Safari may pause on lock: try once to keep going, otherwise reflect it in the UI
+        neuralAudio
+          .play()
+          .then(() => logAudio('audio.resumed-in-background'))
+          .catch((e) => {
+            logAudio('audio.resume-failed', e?.name);
+            markPaused();
+          });
+        return;
+      }
+      markPaused();
+    };
     neuralAudio.addEventListener('pause', onSystemPause);
+
+    const mediaEvents = ['play', 'playing', 'ended', 'error', 'waiting', 'stalled', 'emptied', 'suspend'] as const;
+    const onMedia = (ev: Event) => logAudio(`audio.${ev.type}`, `hidden=${document.hidden}`);
+    mediaEvents.forEach((n) => neuralAudio.addEventListener(n, onMedia));
+    silentAudio.addEventListener('pause', () => logAudio('silent.pause', `hidden=${document.hidden}`));
+    silentAudio.addEventListener('error', () => logAudio('silent.error', silentAudio.error?.code));
+
+    const onVisibility = () => {
+      logAudio('vis', document.visibilityState);
+      if (!document.hidden && isPlayingRef.current && neuralAudio.paused && neuralAudio.src && !neuralAudio.ended) {
+        neuralAudio.play().catch(() => markPaused());
+      }
+    };
+    const onPageHide = () => logAudio('pagehide');
+    const onFreeze = () => logAudio('freeze');
+    const onResume = () => logAudio('resume');
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', onPageHide);
+    document.addEventListener('freeze', onFreeze);
+    document.addEventListener('resume', onResume);
 
     const queue = lookaheadQueueRef.current;
 
     return () => {
       neuralAudio.removeEventListener('pause', onSystemPause);
+      mediaEvents.forEach((n) => neuralAudio.removeEventListener(n, onMedia));
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', onPageHide);
+      document.removeEventListener('freeze', onFreeze);
+      document.removeEventListener('resume', onResume);
+      URL.revokeObjectURL(silentUrl);
       silentAudio.pause();
       neuralAudio.pause();
       silentAudioRef.current = null;
@@ -1096,6 +1172,8 @@ export function useTTS(
   const play = useCallback(
     (textList?: string[], startIndex?: number) => {
       // Unlock iOS Safari Audio in user gesture stack
+      setPlaybackAudioSession();
+      logAudio('play()', startIndex);
       if (silentAudioRef.current) {
         silentAudioRef.current.play().catch(() => {});
       }
@@ -1160,6 +1238,7 @@ export function useTTS(
       ((selectedVoiceURI.startsWith('piper:') || engineMode === 'neural') && isModelReady);
 
     if (isAudioEngine && neuralAudioRef.current && neuralAudioRef.current.src) {
+      if (silentAudioRef.current) silentAudioRef.current.play().catch(() => {});
       neuralAudioRef.current.play().catch(() => {
         playCurrentSentence();
       });

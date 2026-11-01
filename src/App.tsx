@@ -13,6 +13,7 @@ import { IOSGuideModal } from './components/iOSGuideModal';
 import { VoiceModal } from './components/VoiceModal';
 import { VoiceDrawer } from './components/VoiceDrawer';
 import { ReaderSettingsSheet } from './components/ReaderSettingsSheet';
+import { AudioLogModal } from './components/AudioLogModal';
 import { getPalette } from './theme/palettes';
 
 export const App: React.FC = () => {
@@ -25,6 +26,7 @@ export const App: React.FC = () => {
   const [isUploadModalOpen, setIsUploadModalOpen] = useState<boolean>(false);
   const [isVoiceModalOpen, setIsVoiceModalOpen] = useState<boolean>(false);
   const [isVoiceDrawerOpen, setIsVoiceDrawerOpen] = useState<boolean>(false);
+  const [isAudioLogOpen, setIsAudioLogOpen] = useState<boolean>(false);
   const [isReaderSettingsOpen, setIsReaderSettingsOpen] = useState<boolean>(false);
   const [chromeVisible, setChromeVisible] = useState<boolean>(true);
   const [isPlayerSheetOpen, setIsPlayerSheetOpen] = useState<boolean>(false);
@@ -234,6 +236,7 @@ export const App: React.FC = () => {
             onOpenTimerModal={() => setIsTimerModalOpen(true)}
             onOpenIOSGuide={() => setIsIOSGuideOpen(true)}
             onOpenReaderSettings={currentBook ? () => setIsReaderSettingsOpen(true) : undefined}
+            onOpenAudioLog={() => setIsAudioLogOpen(true)}
             onOpenVoiceModal={handleOpenVoiceSettings}
             onOpenUpload={currentBook ? undefined : () => setIsUploadModalOpen(true)}
             sleepTimer={sleepTimer}
@@ -305,6 +308,7 @@ export const App: React.FC = () => {
             />
           )}
 
+          <AudioLogModal open={isAudioLogOpen} onClose={() => setIsAudioLogOpen(false)} />
           <ReaderSettingsSheet open={isReaderSettingsOpen} onClose={() => setIsReaderSettingsOpen(false)} />
 
           {/* Sleep Timer Modal */}

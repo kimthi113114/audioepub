@@ -9,6 +9,7 @@ import {
   UploadOutlined,
   CustomerServiceOutlined,
   MenuOutlined,
+  BugOutlined,
 } from '@ant-design/icons';
 import { useSettingsStore } from '../store/useSettingsStore';
 import type { SleepTimerState } from '../types';
@@ -21,6 +22,7 @@ interface NavbarProps {
   onOpenTimerModal: () => void;
   onOpenIOSGuide: () => void;
   onOpenReaderSettings?: () => void;
+  onOpenAudioLog?: () => void;
   onOpenVoiceModal?: () => void;
   onOpenUpload?: () => void;
   sleepTimer: SleepTimerState;
@@ -32,6 +34,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenTimerModal,
   onOpenIOSGuide,
   onOpenReaderSettings,
+  onOpenAudioLog,
   onOpenVoiceModal,
   onOpenUpload,
   sleepTimer,
@@ -90,6 +93,9 @@ export const Navbar: React.FC<NavbarProps> = ({
         ]),
     { type: 'divider' as const },
     { key: 'ios', icon: <AppleOutlined />, label: 'Mẹo tối ưu iOS Safari', onClick: onOpenIOSGuide },
+    ...(onOpenAudioLog
+      ? [{ key: 'audiolog', icon: <BugOutlined />, label: 'Nhật ký âm thanh (gỡ lỗi)', onClick: onOpenAudioLog }]
+      : []),
   ];
 
   return (
