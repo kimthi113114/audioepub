@@ -1,9 +1,33 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Modal, Button, Space, Typography, message } from 'antd';
-import { CopyOutlined, DeleteOutlined, ReloadOutlined } from '@ant-design/icons';
+import { CopyOutlined, DeleteOutlined, ReloadOutlined, SelectOutlined } from '@ant-design/icons';
 import { clearAudioLog, getAudioLog } from '../utils/audioDebugLog';
 
 const { Text } = Typography;
+
+// navigator.clipboard only exists on https / localhost; the dev server is reached over plain http on the LAN
+const copyText = async (text: string): Promise<boolean> => {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    /* fall through to the legacy path */
+  }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;font-size:16px';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+};
 
 interface Props {
   open: boolean;
@@ -13,6 +37,7 @@ interface Props {
 /** Shows the persisted audio/lifecycle log (useful to debug screen-locked playback on iOS). */
 export const AudioLogModal: React.FC<Props> = ({ open, onClose }) => {
   const [lines, setLines] = useState<string[]>([]);
+  const preRef = useRef<HTMLPreElement>(null);
 
   const refresh = () => setLines(getAudioLog().slice().reverse());
 
@@ -21,12 +46,22 @@ export const AudioLogModal: React.FC<Props> = ({ open, onClose }) => {
   }, [open]);
 
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(getAudioLog().join('\n'));
+    if (await copyText(getAudioLog().join('\n'))) {
       message.success('Đã sao chép nhật ký');
-    } catch {
-      message.error('Không sao chép được, hãy chụp màn hình');
+    } else {
+      selectAll();
+      message.info('Đã chọn sẵn toàn bộ nhật ký, hãy bấm "Sao chép" trên menu của iPhone');
     }
+  };
+
+  const selectAll = () => {
+    const el = preRef.current;
+    if (!el) return;
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
   };
 
   return (
@@ -48,6 +83,9 @@ export const AudioLogModal: React.FC<Props> = ({ open, onClose }) => {
         <Button size="small" icon={<CopyOutlined />} onClick={copy}>
           Sao chép
         </Button>
+        <Button size="small" icon={<SelectOutlined />} onClick={selectAll}>
+          Chọn hết
+        </Button>
         <Button
           size="small"
           icon={<DeleteOutlined />}
@@ -60,7 +98,10 @@ export const AudioLogModal: React.FC<Props> = ({ open, onClose }) => {
         </Button>
       </Space>
       <pre
+        ref={preRef}
         style={{
+          userSelect: 'text',
+          WebkitUserSelect: 'text',
           maxHeight: '50dvh',
           overflow: 'auto',
           margin: 0,

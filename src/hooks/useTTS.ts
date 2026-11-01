@@ -388,10 +388,15 @@ export function useTTS(
     neuralAudio.addEventListener('pause', onSystemPause);
 
     const mediaEvents = ['play', 'playing', 'ended', 'error', 'waiting', 'stalled', 'emptied', 'suspend'] as const;
-    const onMedia = (ev: Event) => logAudio(`audio.${ev.type}`, `hidden=${document.hidden}`);
+    const onMedia = (ev: Event) => {
+      const err = ev.type === 'error' ? neuralAudio.error : null;
+      logAudio(`audio.${ev.type}`, `hidden=${document.hidden}${err ? ` code=${err.code} src=${neuralAudio.getAttribute('src') ? 'set' : 'empty'}` : ''}`);
+    };
     mediaEvents.forEach((n) => neuralAudio.addEventListener(n, onMedia));
     silentAudio.addEventListener('pause', () => logAudio('silent.pause', `hidden=${document.hidden}`));
-    silentAudio.addEventListener('error', () => logAudio('silent.error', silentAudio.error?.code));
+    silentAudio.addEventListener('error', () => {
+      if (silentAudio.getAttribute('src')) logAudio('silent.error', silentAudio.error?.code);
+    });
 
     const onVisibility = () => {
       logAudio('vis', document.visibilityState);
@@ -416,8 +421,10 @@ export function useTTS(
       window.removeEventListener('pagehide', onPageHide);
       document.removeEventListener('freeze', onFreeze);
       document.removeEventListener('resume', onResume);
-      URL.revokeObjectURL(silentUrl);
       silentAudio.pause();
+      silentAudio.removeAttribute('src');
+      silentAudio.load();
+      URL.revokeObjectURL(silentUrl);
       neuralAudio.pause();
       silentAudioRef.current = null;
       neuralAudioRef.current = null;
@@ -1178,6 +1185,10 @@ export function useTTS(
         silentAudioRef.current.play().catch(() => {});
       }
       if (neuralAudioRef.current) {
+        // Drop stale handlers first: play() on an element without media raises 'error', and the old
+        // onerror would advance the queue (skipping a sentence)
+        neuralAudioRef.current.onended = null;
+        neuralAudioRef.current.onerror = null;
         neuralAudioRef.current.play().catch(() => {});
       }
 
