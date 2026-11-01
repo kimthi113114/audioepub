@@ -6,7 +6,6 @@ import {
   BgColorsOutlined,
   FontSizeOutlined,
   AppleOutlined,
-  BookOutlined,
   UploadOutlined,
   CustomerServiceOutlined,
   MenuOutlined,
@@ -122,7 +121,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </Button>
         ) : (
           <Space align="center" size={6} style={{ flexShrink: 0 }}>
-            <BookOutlined style={{ fontSize: 20, color: 'var(--primary)' }} />
+            <img src="/favicon.svg" alt="" width={28} height={28} style={{ borderRadius: 8, display: 'block' }} />
             <Text
               strong
               style={{

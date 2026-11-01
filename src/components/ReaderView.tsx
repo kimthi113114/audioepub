@@ -96,6 +96,9 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
   const readingModeRef = useRef(readingMode);
   const sentenceIdxRef = useRef(currentSentenceIndex);
   const keepSentenceRef = useRef<number | null>(null);
+  // Sentence that was on screen right before a re-layout; the page holding it is restored afterwards
+  const pageAnchorRef = useRef<number | null>(null);
+  const scrollToCurrentRef = useRef<(force: boolean, index?: number, animate?: boolean) => void>(() => {});
   // Resume point: current chapter href + sentence index, written to IndexedDB (debounced)
   const currentHrefRef = useRef<string | null>(null);
   const resumeScrollRef = useRef<number | null>(null);
@@ -617,6 +620,11 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
           keepSentenceRef.current = null;
           onSentencesReady(extractedSentences, keepIndex);
           setRenderTick((t) => t + 1);
+          const anchor = pageAnchorRef.current;
+          pageAnchorRef.current = null;
+          if (anchor !== null && sameChapter) {
+            window.setTimeout(() => scrollToCurrentRef.current(true, anchor, false), 60);
+          }
 
           // Identify matching chapter index
           const foundIdx = loadedChapters.findIndex(
@@ -713,10 +721,10 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
 
   // Bring the active sentence into the comfortable band of the *visible* area (minus mini-player)
   const scrollToCurrent = useCallback(
-    (force: boolean) => {
+    (force: boolean, index: number = currentSentenceIndex, animate: boolean = true) => {
       const container = viewerRef.current;
       const iframe = container?.querySelector('iframe');
-      const target = currentSentenceElementsRef.current[currentSentenceIndex];
+      const target = currentSentenceElementsRef.current[index];
       if (!container || !iframe || !target) return;
 
       if (readingModeRef.current === 'paginated') {
@@ -729,7 +737,7 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
         lastAutoScrollAtRef.current = Date.now();
         const beforeLeft = wrap.scrollLeft;
         wrap.scrollTo({ left: Math.floor(docLeft / delta) * delta, behavior: 'auto' });
-        slideFrom(wrap.scrollLeft - beforeLeft);
+        if (animate) slideFrom(wrap.scrollLeft - beforeLeft);
         return;
       }
 
@@ -818,6 +826,12 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, []);
 
+  const getFirstVisibleSentenceRef = useRef<() => number>(() => 0);
+  useEffect(() => {
+    getFirstVisibleSentenceRef.current = getFirstVisibleSentence;
+    scrollToCurrentRef.current = scrollToCurrent;
+  });
+
   // Re-layout the book when its box changes (mini-player docks, iOS toolbar collapses, rotation)
   useEffect(() => {
     const el = viewerRef.current;
@@ -831,6 +845,7 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
         if (size === last) return;
         last = size;
         try {
+          pageAnchorRef.current = playerActiveRef.current ? sentenceIdxRef.current : getFirstVisibleSentenceRef.current();
           renditionRef.current?.resize(el.clientWidth, el.clientHeight);
         } catch {}
       }, 150);
