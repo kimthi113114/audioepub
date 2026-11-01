@@ -383,6 +383,30 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           }, { passive: true });
           doc.addEventListener('touchmove', clearPress, { passive: true });
           doc.addEventListener('touchend', clearPress, { passive: true });
+
+          // Horizontal swipe flips pages in paginated mode (left = next, right = previous)
+          let swipeStart: { x: number; y: number } | null = null;
+          doc.addEventListener('touchstart', (e: TouchEvent) => {
+            const t = e.touches[0];
+            swipeStart = t ? { x: t.clientX, y: t.clientY } : null;
+          }, { passive: true });
+          doc.addEventListener('touchend', (e: TouchEvent) => {
+            const start = swipeStart;
+            swipeStart = null;
+            const t = e.changedTouches[0];
+            if (!start || !t || readingModeRef.current !== 'paginated' || !renditionRef.current) return;
+            const dx = t.clientX - start.x;
+            const dy = t.clientY - start.y;
+            if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+            longPressed = true; // swallow the synthetic click
+            if (dx < 0) renditionRef.current.next();
+            else renditionRef.current.prev();
+          }, { passive: true });
+          doc.addEventListener('keydown', (e: KeyboardEvent) => {
+            if (readingModeRef.current !== 'paginated' || !renditionRef.current) return;
+            if (e.key === 'ArrowRight') renditionRef.current.next();
+            if (e.key === 'ArrowLeft') renditionRef.current.prev();
+          });
           doc.addEventListener('click', (e: MouseEvent) => {
             if (longPressed) {
               longPressed = false;
@@ -390,10 +414,15 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             }
             if (doc.getSelection()?.toString()) return;
             if (readingModeRef.current === 'paginated' && renditionRef.current) {
-              const w = doc.documentElement.clientWidth || 1;
-              const ratio = (e.clientX % w) / w;
-              if (ratio < 0.25) return void renditionRef.current.prev();
-              if (ratio > 0.75) return void renditionRef.current.next();
+              // In paginated flow the iframe spans every page; convert to coordinates of the visible page
+              const wrap = viewerRef.current;
+              const frame = wrap?.querySelector('iframe');
+              if (wrap && frame) {
+                const x = e.clientX + frame.getBoundingClientRect().left - wrap.getBoundingClientRect().left;
+                const ratio = x / (wrap.clientWidth || 1);
+                if (ratio < 0.25) return void renditionRef.current.prev();
+                if (ratio > 0.75) return void renditionRef.current.next();
+              }
             }
             tapRef.current?.(sentenceOf(e.target));
           });
@@ -487,7 +516,14 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       if (!container || !iframe || !target) return;
 
       if (readingModeRef.current === 'paginated') {
-        target.scrollIntoView({ behavior: 'auto', block: 'nearest', inline: 'nearest' });
+        // The iframe spans every page; flip to the page that holds the active sentence
+        const wrap = (container.querySelector('.epub-container') as HTMLElement | null) || container;
+        const docLeft = target.getBoundingClientRect().left;
+        const viewLeft = docLeft + iframe.getBoundingClientRect().left - wrap.getBoundingClientRect().left;
+        if (!force && viewLeft >= 0 && viewLeft < wrap.clientWidth) return;
+        const delta = (renditionRef.current as any)?.manager?.layout?.delta || wrap.clientWidth;
+        lastAutoScrollAtRef.current = Date.now();
+        wrap.scrollTo({ left: Math.floor(docLeft / delta) * delta, behavior: 'auto' });
         return;
       }
 
