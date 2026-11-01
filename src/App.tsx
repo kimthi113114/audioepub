@@ -14,6 +14,7 @@ import { VoiceModal } from './components/VoiceModal';
 import { VoiceDrawer } from './components/VoiceDrawer';
 import { ReaderSettingsSheet } from './components/ReaderSettingsSheet';
 import { AudioLogModal } from './components/AudioLogModal';
+import { StorageModal } from './components/StorageModal';
 import { getPalette } from './theme/palettes';
 
 export const App: React.FC = () => {
@@ -26,6 +27,7 @@ export const App: React.FC = () => {
   const [isUploadModalOpen, setIsUploadModalOpen] = useState<boolean>(false);
   const [isVoiceModalOpen, setIsVoiceModalOpen] = useState<boolean>(false);
   const [isVoiceDrawerOpen, setIsVoiceDrawerOpen] = useState<boolean>(false);
+  const [isStorageOpen, setIsStorageOpen] = useState<boolean>(false);
   const [isAudioLogOpen, setIsAudioLogOpen] = useState<boolean>(false);
   const [isReaderSettingsOpen, setIsReaderSettingsOpen] = useState<boolean>(false);
   const [chromeVisible, setChromeVisible] = useState<boolean>(true);
@@ -237,6 +239,7 @@ export const App: React.FC = () => {
             onOpenIOSGuide={() => setIsIOSGuideOpen(true)}
             onOpenReaderSettings={currentBook ? () => setIsReaderSettingsOpen(true) : undefined}
             onOpenAudioLog={() => setIsAudioLogOpen(true)}
+            onOpenStorage={() => setIsStorageOpen(true)}
             onOpenVoiceModal={handleOpenVoiceSettings}
             onOpenUpload={currentBook ? undefined : () => setIsUploadModalOpen(true)}
             sleepTimer={sleepTimer}
@@ -308,6 +311,15 @@ export const App: React.FC = () => {
             />
           )}
 
+          <StorageModal
+            open={isStorageOpen}
+            onClose={() => setIsStorageOpen(false)}
+            onLibraryChanged={loadBooks}
+            onLibraryCleared={() => {
+              setIsStorageOpen(false);
+              handleBackToShelf();
+            }}
+          />
           <AudioLogModal open={isAudioLogOpen} onClose={() => setIsAudioLogOpen(false)} />
           <ReaderSettingsSheet open={isReaderSettingsOpen} onClose={() => setIsReaderSettingsOpen(false)} />
 

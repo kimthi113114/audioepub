@@ -472,8 +472,17 @@ export function useTTS(
           artist: voiceName,
           album: chapterTitle || bookTitle || 'Sách nói EPUB Tiếng Việt',
           artwork: bookCoverUrl
-            ? [{ src: bookCoverUrl, sizes: '512x512', type: 'image/jpeg' }]
-            : undefined,
+            ? [
+                {
+                  src: bookCoverUrl,
+                  sizes: '512x512',
+                  type: /^data:(image\/[a-z+.-]+)/i.exec(bookCoverUrl)?.[1] || 'image/jpeg',
+                },
+              ]
+            : [
+                { src: `${window.location.origin}/icon-512.png`, sizes: '512x512', type: 'image/png' },
+                { src: `${window.location.origin}/icon-192.png`, sizes: '192x192', type: 'image/png' },
+              ],
         });
       } catch (err) {
         console.warn('Failed to update MediaSession metadata:', err);
