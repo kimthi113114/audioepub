@@ -1,5 +1,5 @@
 import React from 'react';
-import { Button, Space, Typography, Tooltip, Badge, Dropdown, type MenuProps } from 'antd';
+import { Button, Space, Typography, Badge, Dropdown, type MenuProps } from 'antd';
 import {
   ArrowLeftOutlined,
   ClockCircleOutlined,
@@ -9,6 +9,7 @@ import {
   BookOutlined,
   UploadOutlined,
   CustomerServiceOutlined,
+  MenuOutlined,
 } from '@ant-design/icons';
 import { useSettingsStore } from '../store/useSettingsStore';
 import type { SleepTimerState } from '../types';
@@ -63,6 +64,34 @@ export const Navbar: React.FC<NavbarProps> = ({
     const s = sleepTimer.remainingSeconds % 60;
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
+
+  const menuItems: MenuProps['items'] = [
+    ...(onOpenVoiceModal
+      ? [{ key: 'voice', icon: <CustomerServiceOutlined />, label: 'Giọng đọc', onClick: onOpenVoiceModal }]
+      : []),
+    ...(onOpenReaderSettings
+      ? [{ key: 'display', icon: <FontSizeOutlined />, label: 'Hiển thị (Aa)', onClick: onOpenReaderSettings }]
+      : []),
+    {
+      key: 'timer',
+      icon: <ClockCircleOutlined />,
+      label: sleepTimer.isActive ? `Hẹn giờ ngủ · ${formatTimerLabel()}` : 'Hẹn giờ ngủ',
+      onClick: onOpenTimerModal,
+    },
+    ...(onOpenReaderSettings
+      ? []
+      : [
+          { type: 'divider' as const },
+          {
+            key: 'theme',
+            icon: <BgColorsOutlined />,
+            label: 'Giao diện',
+            children: themeMenuItems,
+          },
+        ]),
+    { type: 'divider' as const },
+    { key: 'ios', icon: <AppleOutlined />, label: 'Mẹo tối ưu iOS Safari', onClick: onOpenIOSGuide },
+  ];
 
   return (
     <header
@@ -134,54 +163,23 @@ export const Navbar: React.FC<NavbarProps> = ({
           </Button>
         )}
 
-        <Tooltip title="Mẹo tối ưu iOS Safari">
+        {sleepTimer.isActive && (
           <Button
-            type="text"
-            icon={<AppleOutlined />}
-            onClick={onOpenIOSGuide}
-            style={{ fontSize: 16 }}
-          />
-        </Tooltip>
-
-        {onOpenVoiceModal && (
-          <Tooltip title="Chọn & Nghe thử giọng đọc">
-            <Button
-              id="btn-voice-modal"
-              type="text"
-              icon={<CustomerServiceOutlined style={{ color: 'var(--primary)' }} />}
-              onClick={onOpenVoiceModal}
-              aria-label="Chọn & Nghe thử giọng đọc"
-              style={{ fontSize: 16 }}
-            />
-          </Tooltip>
-        )}
-
-        {onOpenReaderSettings ? (
-          <Tooltip title="Hiển thị (Aa)">
-            <Button type="text" icon={<FontSizeOutlined />} onClick={onOpenReaderSettings} aria-label="Hiển thị" />
-          </Tooltip>
-        ) : (
-          <Dropdown menu={{ items: themeMenuItems }} placement="bottomRight" trigger={['click']}>
-            <Tooltip title="Chế độ màu">
-              <Button type="text" icon={<BgColorsOutlined />} />
-            </Tooltip>
-          </Dropdown>
-        )}
-
-        <Badge dot={sleepTimer.isActive} color="#52c41a">
-          <Button
-            type={sleepTimer.isActive ? 'primary' : 'default'}
+            type="primary"
+            size="small"
             icon={<ClockCircleOutlined />}
             onClick={onOpenTimerModal}
-            size="middle"
-            style={{
-              borderRadius: 16,
-              fontSize: 13,
-            }}
+            style={{ borderRadius: 14, fontSize: 12 }}
           >
-            {sleepTimer.isActive ? formatTimerLabel() : <span className="hide-on-mobile">Hẹn giờ</span>}
+            {formatTimerLabel()}
           </Button>
-        </Badge>
+        )}
+
+        <Dropdown menu={{ items: menuItems }} placement="bottomRight" trigger={['click']}>
+          <Badge dot={sleepTimer.isActive} color="#52c41a" offset={[-6, 6]}>
+            <Button type="text" icon={<MenuOutlined />} aria-label="Menu" style={{ width: 40, height: 40, fontSize: 18 }} />
+          </Badge>
+        </Dropdown>
       </Space>
     </header>
   );
