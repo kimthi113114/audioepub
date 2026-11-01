@@ -50,9 +50,8 @@ interface VoiceDrawerProps {
   onDownloadKokoroModel?: (onProgress?: (percent: number) => void) => Promise<void>;
 }
 
-// Simple-first ordering: recommended, on-device, then advanced engines (Kokoro needs WebGPU)
+// Simple-first ordering: recommended, on-device, then advanced engines
 const TAB_ORDER = ["edge", "system", "kokoro", "vieneu"];
-const HAS_WEBGPU = typeof navigator !== "undefined" && "gpu" in navigator;
 
 export const VoiceDrawer: React.FC<VoiceDrawerProps> = ({
   open,
@@ -573,7 +572,7 @@ export const VoiceDrawer: React.FC<VoiceDrawerProps> = ({
                 </Card>
 
                 <Input.Search
-                  placeholder="Tìm giọng VieNeu (Minh Quân, Phương Trang...)"
+                  placeholder="Tìm giọng VieNeu (Mai Anh, Thiện Minh...)"
                   allowClear
                   value={vieneuSearch}
                   onChange={(e) => setVieNeuSearch(e.target.value)}
@@ -747,7 +746,7 @@ export const VoiceDrawer: React.FC<VoiceDrawerProps> = ({
               </div>
             ),
           },
-        ]).filter((t) => t.key !== "kokoro" || HAS_WEBGPU).sort((a, b) => TAB_ORDER.indexOf(a.key) - TAB_ORDER.indexOf(b.key))}
+        ]).sort((a, b) => TAB_ORDER.indexOf(a.key) - TAB_ORDER.indexOf(b.key))}
       />
     </Drawer>
   );
