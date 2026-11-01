@@ -12,6 +12,7 @@ import { SleepTimerModal } from './components/SleepTimerModal';
 import { IOSGuideModal } from './components/iOSGuideModal';
 import { VoiceModal } from './components/VoiceModal';
 import { VoiceDrawer } from './components/VoiceDrawer';
+import { ReaderSettingsSheet } from './components/ReaderSettingsSheet';
 
 export const App: React.FC = () => {
   const { theme } = useSettingsStore();
@@ -23,6 +24,7 @@ export const App: React.FC = () => {
   const [isUploadModalOpen, setIsUploadModalOpen] = useState<boolean>(false);
   const [isVoiceModalOpen, setIsVoiceModalOpen] = useState<boolean>(false);
   const [isVoiceDrawerOpen, setIsVoiceDrawerOpen] = useState<boolean>(false);
+  const [isReaderSettingsOpen, setIsReaderSettingsOpen] = useState<boolean>(false);
   const [chromeVisible, setChromeVisible] = useState<boolean>(true);
   const [isPlayerSheetOpen, setIsPlayerSheetOpen] = useState<boolean>(false);
   const [chapterInfo, setChapterInfo] = useState({ title: '', index: 0, total: 0 });
@@ -112,11 +114,12 @@ export const App: React.FC = () => {
 
   // Callback when ReaderView extracts new sentences from current chapter
   const handleSentencesReady = useCallback(
-    (newSentences: string[]) => {
-      setSentencesList(newSentences, 0);
+    (newSentences: string[], keepIndex?: number) => {
+      const start = Math.min(keepIndex ?? 0, Math.max(0, newSentences.length - 1));
+      setSentencesList(newSentences, start);
       if (autoPlayNextChapterRef.current) {
         autoPlayNextChapterRef.current = false;
-        play(newSentences, 0);
+        play(newSentences, start);
       }
     },
     [setSentencesList, play]
@@ -224,6 +227,7 @@ export const App: React.FC = () => {
             onBackToShelf={currentBook ? handleBackToShelf : undefined}
             onOpenTimerModal={() => setIsTimerModalOpen(true)}
             onOpenIOSGuide={() => setIsIOSGuideOpen(true)}
+            onOpenReaderSettings={currentBook ? () => setIsReaderSettingsOpen(true) : undefined}
             onOpenVoiceModal={handleOpenVoiceSettings}
             onOpenUpload={currentBook ? undefined : () => setIsUploadModalOpen(true)}
             sleepTimer={sleepTimer}
@@ -292,6 +296,8 @@ export const App: React.FC = () => {
               sleepTimer={sleepTimer}
             />
           )}
+
+          <ReaderSettingsSheet open={isReaderSettingsOpen} onClose={() => setIsReaderSettingsOpen(false)} />
 
           {/* Sleep Timer Modal */}
           <SleepTimerModal

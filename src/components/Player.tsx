@@ -146,7 +146,7 @@ export const Player: React.FC<PlayerProps> = ({
         placement="bottom"
         open={sheetOpen}
         onClose={() => onSheetOpenChange(false)}
-        height="85dvh"
+        size="85dvh"
         closable={false}
         title={null}
         styles={{
@@ -210,7 +210,7 @@ export const Player: React.FC<PlayerProps> = ({
           </div>
         </div>
 
-        <Space direction="vertical" size={10} style={{ width: '100%' }}>
+        <Space orientation="vertical" size={10} style={{ width: '100%' }}>
           <Button block size="large" icon={<ClockCircleOutlined />} onClick={onOpenTimer} style={{ height: 48, textAlign: 'left' }}>
             Hẹn giờ ngủ{timerLabel ? ` · ${timerLabel}` : ''}
           </Button>

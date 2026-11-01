@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import ePub, { type Book as EpubBook, type Rendition } from 'epubjs';
-import { Button, Drawer, List, Typography, Space, Input, message } from 'antd';
+import { Button, Drawer, Typography, Space, Input, message } from 'antd';
 import {
   UnorderedListOutlined,
   LeftOutlined,
@@ -27,7 +27,7 @@ export interface ChapterControls {
 interface ReaderViewProps {
   book: Book;
   currentSentenceIndex: number;
-  onSentencesReady: (sentences: string[]) => void;
+  onSentencesReady: (sentences: string[], keepIndex?: number) => void;
   onChapterChanged?: (title: string, index: number, total: number) => void;
   /** Tap on text: sentence index, or null when tapping blank area */
   onSentenceTap?: (index: number | null) => void;
@@ -67,10 +67,14 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   const tapRef = useRef(onSentenceTap);
   const longPressRef = useRef(onSentenceLongPress);
   const readingModeRef = useRef(readingMode);
+  const sentenceIdxRef = useRef(currentSentenceIndex);
+  const keepSentenceRef = useRef<number | null>(null);
+  const [renderTick, setRenderTick] = useState<number>(0);
   useEffect(() => {
     tapRef.current = onSentenceTap;
     longPressRef.current = onSentenceLongPress;
     readingModeRef.current = readingMode;
+    sentenceIdxRef.current = currentSentenceIndex;
   });
 
   const barBg =
@@ -88,14 +92,33 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
 
   // Filtered chapters for TOC search
   const filteredChapters = useMemo(() => {
-    if (!tocSearch.trim()) return chapters;
+    const all = chapters.map((c, idx) => ({ c, idx }));
+    if (!tocSearch.trim()) return all;
     const q = normalizeStr(tocSearch.trim());
-    return chapters.filter((c, idx) => {
-      const numMatch = `${idx + 1}`.includes(q);
-      const titleMatch = normalizeStr(c.label).includes(q);
-      return numMatch || titleMatch;
-    });
+    return all.filter(({ c, idx }) => `${idx + 1}`.includes(q) || normalizeStr(c.label).includes(q));
   }, [chapters, tocSearch]);
+
+  // Virtualized TOC: only rows in view are mounted (books can have thousands of chapters)
+  const TOC_ROW_H = 44;
+  const tocListRef = useRef<HTMLDivElement | null>(null);
+  const [tocScrollTop, setTocScrollTop] = useState<number>(0);
+  const [tocListH, setTocListH] = useState<number>(400);
+
+  const scrollTocToCurrent = useCallback(() => {
+    const el = tocListRef.current;
+    if (!el) return;
+    el.scrollTop = Math.max(0, currentChapterIndex * TOC_ROW_H - el.clientHeight / 2);
+  }, [currentChapterIndex]);
+
+  useEffect(() => {
+    if (!isTocOpen) return;
+    const t = window.setTimeout(() => {
+      const el = tocListRef.current;
+      if (el) setTocListH(el.clientHeight);
+      scrollTocToCurrent();
+    }, 350);
+    return () => window.clearTimeout(t);
+  }, [isTocOpen, scrollTocToCurrent]);
 
   // Navigate to next chapter (OOM Safe: single chapter lazy loaded)
   const handleNextChapter = useCallback(() => {
@@ -247,7 +270,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         rendition = epubBook.renderTo(container, {
           width: '100%',
           height: '100%',
-          flow: readingMode === 'continuous' ? 'scrolled-doc' : 'paginated',
+          flow: readingModeRef.current === 'continuous' ? 'scrolled-doc' : 'paginated',
           manager: 'default',
           spread: 'none',
         });
@@ -334,6 +357,10 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           const doc = view.document;
           const extractedSentences = tagAndExtractSentences(doc);
 
+          // A freshly rendered chapter scrolls programmatically; do not mistake that for the user
+          lastAutoScrollAtRef.current = Date.now();
+          doc.addEventListener('scroll', () => onUserScrollRef.current(), { passive: true });
+
           // Tap / long-press handling inside the chapter iframe
           const sentenceOf = (target: EventTarget | null): number | null => {
             const el = (target as HTMLElement | null)?.closest?.('.tts-sentence') as HTMLElement | null;
@@ -370,7 +397,10 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             }
             tapRef.current?.(sentenceOf(e.target));
           });
-          onSentencesReady(extractedSentences);
+          const keepIndex = keepSentenceRef.current ?? undefined;
+          keepSentenceRef.current = null;
+          onSentencesReady(extractedSentences, keepIndex);
+          setRenderTick((t) => t + 1);
 
           // Identify matching chapter index
           const foundIdx = loadedChapters.findIndex(
@@ -429,13 +459,68 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         } catch (_e) {}
       }
     };
-  }, [book, readingMode]);
+  }, [book]);
 
-  // Highlight active sentence & auto-scroll
+  // Switch scroll/page mode on the live rendition (no re-init); keep chapter position and active sentence
+  const appliedModeRef = useRef(readingMode);
   useEffect(() => {
+    if (appliedModeRef.current === readingMode) return;
+    appliedModeRef.current = readingMode;
     const rendition = renditionRef.current;
     if (!rendition) return;
+    const cfi = (rendition.currentLocation() as any)?.start?.cfi as string | undefined;
+    keepSentenceRef.current = sentenceIdxRef.current;
+    rendition.flow(readingMode === 'continuous' ? 'scrolled-doc' : 'paginated');
+    rendition.display(cfi || undefined);
+  }, [readingMode]);
 
+  // Auto-follow: stays on while the user does not scroll by hand; a manual scroll pauses it
+  const [autoFollow, setAutoFollow] = useState<boolean>(true);
+  const lastAutoScrollAtRef = useRef<number>(0);
+
+  // Bring the active sentence into the comfortable band of the *visible* area (minus mini-player)
+  const scrollToCurrent = useCallback(
+    (force: boolean) => {
+      const container = viewerRef.current;
+      const iframe = container?.querySelector('iframe');
+      const target = currentSentenceElementsRef.current[currentSentenceIndex];
+      if (!container || !iframe || !target) return;
+
+      if (readingModeRef.current === 'paginated') {
+        target.scrollIntoView({ behavior: 'auto', block: 'nearest', inline: 'nearest' });
+        return;
+      }
+
+      // The scroller is either our wrapper (tall iframe) or the chapter document inside the iframe
+      const doc = iframe.contentDocument;
+      const innerScroller = doc?.scrollingElement as HTMLElement | null | undefined;
+      // epub.js scrolled flow scrolls one of the wrappers; otherwise the chapter document itself scrolls
+      let scroller: HTMLElement | null | undefined = null;
+      for (let el: HTMLElement | null = iframe.parentElement; el; el = el.parentElement) {
+        if (el.scrollHeight > el.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(el).overflowY)) {
+          scroller = el;
+          break;
+        }
+        if (el === container) break;
+      }
+      scroller = scroller || innerScroller;
+      if (!scroller) return;
+
+      const containerRect = container.getBoundingClientRect();
+      const inset = playerActive ? 72 : 0;
+      const visibleH = Math.max(120, container.clientHeight - inset);
+      const elTop = target.getBoundingClientRect().top + iframe.getBoundingClientRect().top - containerRect.top;
+      const inBand = elTop >= visibleH * 0.1 && elTop <= visibleH * 0.65;
+      if (inBand && !force) return;
+
+      lastAutoScrollAtRef.current = Date.now();
+      scroller.scrollTo({ top: Math.max(0, scroller.scrollTop + elTop - visibleH * 0.38), behavior: 'auto' });
+    },
+    [currentSentenceIndex, playerActive]
+  );
+
+  // Highlight active sentence & follow it
+  useEffect(() => {
     const iframe = viewerRef.current?.querySelector('iframe');
     const doc = iframe?.contentDocument || iframe?.contentWindow?.document;
     if (!doc) return;
@@ -444,22 +529,33 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       el.classList.remove('tts-active-sentence');
     });
 
-    const elements = currentSentenceElementsRef.current;
-    if (elements && elements[currentSentenceIndex]) {
-      const target = elements[currentSentenceIndex];
+    const target = currentSentenceElementsRef.current[currentSentenceIndex];
+    if (!target) return;
+    if (highlightSentence) target.classList.add('tts-active-sentence');
+    if (autoScroll && autoFollow && playerActive) scrollToCurrent(false);
+  }, [currentSentenceIndex, highlightSentence, autoScroll, autoFollow, playerActive, scrollToCurrent, renderTick]);
 
-      if (highlightSentence) {
-        target.classList.add('tts-active-sentence');
-      }
+  // Manual scroll while listening pauses auto-follow (wrapper scroll + scroll inside the chapter iframe)
+  const onUserScrollRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    onUserScrollRef.current = () => {
+      if (Date.now() - lastAutoScrollAtRef.current < 600) return;
+      setAutoFollow(false);
+    };
+  });
+  useEffect(() => {
+    const container = viewerRef.current;
+    if (!container) return;
+    const onScroll = () => onUserScrollRef.current();
+    // capture: scroll events do not bubble, but epub.js scrolls an inner wrapper
+    container.addEventListener('scroll', onScroll, { passive: true, capture: true });
+    return () => container.removeEventListener('scroll', onScroll, { capture: true });
+  }, []);
 
-      if (autoScroll) {
-        target.scrollIntoView({
-          behavior: 'smooth',
-          block: 'center',
-        });
-      }
-    }
-  }, [currentSentenceIndex, autoScroll, highlightSentence]);
+  // Listening starts, or a new chapter is loaded: follow again
+  useEffect(() => {
+    setAutoFollow(true);
+  }, [playerActive, currentChapterIndex]);
 
   // Update theme dynamically
   useEffect(() => {
@@ -469,6 +565,8 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     try {
       rendition.themes.select(theme);
       rendition.themes.fontSize(`${fontSize}px`);
+      rendition.themes.override('line-height', `${lineHeight}`);
+      rendition.themes.override('font-family', fontFamily);
     } catch (_e) {}
   }, [theme, fontSize, lineHeight, fontFamily]);
 
@@ -544,6 +642,28 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         }}
       />
 
+      {playerActive && !autoFollow && (
+        <Button
+          type="primary"
+          shape="round"
+          size="middle"
+          icon={<AimOutlined />}
+          onClick={() => {
+            setAutoFollow(true);
+            scrollToCurrent(true);
+          }}
+          style={{
+            position: 'absolute',
+            right: 16,
+            bottom: 'calc(var(--sab, 0px) + 80px)',
+            zIndex: 45,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+          }}
+        >
+          Về câu đang đọc
+        </Button>
+      )}
+
       {/* Reading progress hairline (always visible) */}
       <div
         style={{
@@ -606,7 +726,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         />
       </div>
 
-      {/* Table of Contents Drawer with Fast Search & Jump (1000 chapters support) */}
+      {/* Table of Contents bottom sheet with fast search & virtualized list */}
       <Drawer
         title={
           <Space>
@@ -614,11 +734,17 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             <span>Mục lục ({chapters.length} chương)</span>
           </Space>
         }
-        placement="left"
-        onClose={() => setIsTocOpen(false)}
+        placement="bottom"
+        onClose={() => {
+          setIsTocOpen(false);
+          setTocSearch('');
+        }}
         open={isTocOpen}
-        width={340}
-        styles={{ body: { padding: '12px 16px', display: 'flex', flexDirection: 'column' } }}
+        size="90dvh"
+        destroyOnHidden
+        styles={{
+          body: { padding: '12px 16px', paddingBottom: 'calc(var(--sab, 0px) + 12px)', display: 'flex', flexDirection: 'column' },
+        }}
       >
         <Input.Search
           placeholder="Tìm theo số (vd: 500) hoặc tên..."
@@ -627,16 +753,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           onChange={(e) => setTocSearch(e.target.value)}
           style={{ marginBottom: 10 }}
         />
-
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginBottom: 10,
-            flexShrink: 0,
-          }}
-        >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexShrink: 0 }}>
           <Text type="secondary" style={{ fontSize: 12 }}>
             {filteredChapters.length < chapters.length
               ? `Tìm thấy ${filteredChapters.length} / ${chapters.length} chương`
@@ -648,53 +765,53 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             icon={<AimOutlined />}
             onClick={() => {
               setTocSearch('');
-              setTimeout(() => {
-                const el = document.getElementById(`toc-item-${currentChapterIndex}`);
-                el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-              }, 100);
+              window.setTimeout(scrollTocToCurrent, 50);
             }}
             style={{ padding: 0, fontSize: 12 }}
           >
             Đang đọc ({currentChapterIndex + 1})
           </Button>
         </div>
-
-        <div style={{ flex: 1, overflowY: 'auto' }}>
-          <List
-            dataSource={filteredChapters.slice(0, 300)}
-            renderItem={(chapter) => {
-              const originalIndex = chapters.findIndex(
-                (c) => c.id === chapter.id || c.href === chapter.href
-              );
-              const isCurrent = originalIndex === currentChapterIndex;
-              return (
-                <List.Item
-                  id={`toc-item-${originalIndex}`}
-                  style={{
-                    cursor: 'pointer',
-                    padding: '8px 12px',
-                    borderRadius: 6,
-                    marginBottom: 4,
-                    background: isCurrent ? 'rgba(22, 119, 255, 0.1)' : 'transparent',
-                    border: isCurrent
-                      ? '1px solid rgba(22, 119, 255, 0.3)'
-                      : '1px solid transparent',
-                  }}
-                  onClick={() => handleSelectChapter(chapter.href, originalIndex)}
-                >
-                  <Text
-                    strong={isCurrent}
+        <div
+          ref={tocListRef}
+          onScroll={(e) => setTocScrollTop(e.currentTarget.scrollTop)}
+          style={{ flex: 1, minHeight: 0, overflowY: 'auto', position: 'relative', WebkitOverflowScrolling: 'touch' }}
+        >
+          <div style={{ height: filteredChapters.length * TOC_ROW_H, position: 'relative' }}>
+            {filteredChapters
+              .slice(
+                Math.max(0, Math.floor(tocScrollTop / TOC_ROW_H) - 6),
+                Math.ceil((tocScrollTop + tocListH) / TOC_ROW_H) + 6
+              )
+              .map(({ c, idx }, k) => {
+                const row = Math.max(0, Math.floor(tocScrollTop / TOC_ROW_H) - 6) + k;
+                const isCurrent = idx === currentChapterIndex;
+                return (
+                  <div
+                    key={c.id + idx}
+                    onClick={() => handleSelectChapter(c.href, idx)}
                     style={{
-                      color: isCurrent ? '#1677ff' : 'inherit',
-                      fontSize: 13,
+                      position: 'absolute',
+                      top: row * TOC_ROW_H,
+                      left: 0,
+                      right: 0,
+                      height: TOC_ROW_H - 4,
+                      display: 'flex',
+                      alignItems: 'center',
+                      padding: '0 12px',
+                      borderRadius: 6,
+                      cursor: 'pointer',
+                      background: isCurrent ? 'rgba(22, 119, 255, 0.1)' : 'transparent',
+                      border: isCurrent ? '1px solid rgba(22, 119, 255, 0.3)' : '1px solid transparent',
                     }}
                   >
-                    {`${originalIndex + 1}. ${chapter.label}`}
-                  </Text>
-                </List.Item>
-              );
-            }}
-          />
+                    <Text strong={isCurrent} ellipsis style={{ color: isCurrent ? '#1677ff' : 'inherit', fontSize: 14 }}>
+                      {`${idx + 1}. ${c.label}`}
+                    </Text>
+                  </div>
+                );
+              })}
+          </div>
         </div>
       </Drawer>
     </div>

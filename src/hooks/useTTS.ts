@@ -326,9 +326,21 @@ export function useTTS(
     (neuralAudio as any).playsInline = true;
     neuralAudioRef.current = neuralAudio;
 
+    // OS-level interruption (call, Siri, headphones unplugged): reflect it instead of staying "playing"
+    const onSystemPause = () => {
+      if (!isPlayingRef.current || neuralAudio.ended || !neuralAudio.src) return;
+      isPlayingRef.current = false;
+      setPlaybackState('paused');
+      try {
+        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
+      } catch {}
+    };
+    neuralAudio.addEventListener('pause', onSystemPause);
+
     const queue = lookaheadQueueRef.current;
 
     return () => {
+      neuralAudio.removeEventListener('pause', onSystemPause);
       silentAudio.pause();
       neuralAudio.pause();
       silentAudioRef.current = null;
@@ -462,6 +474,36 @@ export function useTTS(
     []
   );
 
+  // Engine failure policy: Safari autoplay block -> pause with a prompt; repeated synth failures -> fall back to on-device voice
+  const failCountRef = useRef<number>(0);
+  const handleEngineFailure = useCallback(
+    (idx: number, error: unknown, label: string) => {
+      if (!isPlayingRef.current) return;
+      if ((error as { name?: string })?.name === 'NotAllowedError') {
+        isPlayingRef.current = false;
+        setPlaybackState('paused');
+        message.warning('Safari đã chặn tự phát. Chạm nút ▶ để tiếp tục nghe.');
+        return;
+      }
+      failCountRef.current += 1;
+      if (failCountRef.current >= 2) {
+        failCountRef.current = 0;
+        const fallback = vietnameseVoices[0] || voices[0];
+        if (fallback && engineMode !== 'system') {
+          message.warning(`Giọng ${label} đang lỗi, chuyển sang giọng trên máy.`);
+          setSelectedVoiceURI(fallback.voiceURI);
+        } else {
+          isPlayingRef.current = false;
+          setPlaybackState('paused');
+          message.error(`Giọng ${label} đang lỗi. Hãy thử chọn giọng khác.`);
+        }
+        return;
+      }
+      advanceToNext(idx);
+    },
+    [advanceToNext, vietnameseVoices, voices, engineMode, setSelectedVoiceURI]
+  );
+
   // 4. Core Speech Engines
   // A0. Microsoft Edge-TTS Studio Neural Engine (24kHz MP3 + Lookahead Queue)
   const playEdgeSentence = useCallback(
@@ -549,6 +591,7 @@ export function useTTS(
         };
 
         await audio.play();
+        failCountRef.current = 0;
         setPlaybackState('playing');
         isPlayingRef.current = true;
 
@@ -560,12 +603,10 @@ export function useTTS(
         queue.pruneOlderThan(idx);
       } catch (error) {
         console.error('[Edge TTS] Error synthesizing sentence:', error);
-        if (isPlayingRef.current) {
-          advanceToNext(idx);
-        }
+        handleEngineFailure(idx, error, 'AI Studio');
       }
     },
-    [advanceToNext, selectedVoiceURI, speechRate, speechPitch, volume, updateMediaSession]
+    [advanceToNext, handleEngineFailure, selectedVoiceURI, speechRate, speechPitch, volume, updateMediaSession]
   );
 
   // A1. Kokoro Client-side WebGPU/WASM Engine (HTML5 <audio> + Lookahead Queue)
@@ -651,6 +692,7 @@ export function useTTS(
         };
 
         await audio.play();
+        failCountRef.current = 0;
         setPlaybackState('playing');
         isPlayingRef.current = true;
 
@@ -662,10 +704,10 @@ export function useTTS(
         queue.pruneOlderThan(idx);
       } catch (error) {
         console.error('[Kokoro TTS] Error synthesizing sentence:', error);
-        if (isPlayingRef.current) advanceToNext(idx);
+        handleEngineFailure(idx, error, 'Kokoro');
       }
     },
-    [advanceToNext, selectedVoiceURI, speechRate, volume, updateMediaSession]
+    [advanceToNext, handleEngineFailure, selectedVoiceURI, speechRate, volume, updateMediaSession]
   );
 
   // A2. VieNeu-TTS 48kHz Engine (HTML5 <audio> + Lookahead Queue)
@@ -751,6 +793,7 @@ export function useTTS(
         };
 
         await audio.play();
+        failCountRef.current = 0;
         setPlaybackState('playing');
         isPlayingRef.current = true;
 
@@ -762,10 +805,10 @@ export function useTTS(
         queue.pruneOlderThan(idx);
       } catch (error) {
         console.error('[VieNeu TTS] Error synthesizing sentence:', error);
-        if (isPlayingRef.current) advanceToNext(idx);
+        handleEngineFailure(idx, error, 'VieNeu');
       }
     },
-    [advanceToNext, selectedVoiceURI, speechRate, speechPitch, volume, updateMediaSession]
+    [advanceToNext, handleEngineFailure, selectedVoiceURI, speechRate, speechPitch, volume, updateMediaSession]
   );
 
   // A. Neural Piper WASM Engine (HTML5 <audio> + Lookahead Queue)
@@ -855,6 +898,7 @@ export function useTTS(
         };
 
         await audio.play();
+        failCountRef.current = 0;
         setPlaybackState('playing');
         isPlayingRef.current = true;
 

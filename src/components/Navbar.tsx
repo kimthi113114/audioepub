@@ -20,6 +20,7 @@ interface NavbarProps {
   onBackToShelf?: () => void;
   onOpenTimerModal: () => void;
   onOpenIOSGuide: () => void;
+  onOpenReaderSettings?: () => void;
   onOpenVoiceModal?: () => void;
   onOpenUpload?: () => void;
   sleepTimer: SleepTimerState;
@@ -30,12 +31,12 @@ export const Navbar: React.FC<NavbarProps> = ({
   onBackToShelf,
   onOpenTimerModal,
   onOpenIOSGuide,
+  onOpenReaderSettings,
   onOpenVoiceModal,
   onOpenUpload,
   sleepTimer,
 }) => {
-  const { setTheme, fontSize, setFontSize, readingMode, setReadingMode } =
-    useSettingsStore();
+  const { setTheme } = useSettingsStore();
 
   const themeMenuItems: MenuProps['items'] = [
     {
@@ -52,33 +53,6 @@ export const Navbar: React.FC<NavbarProps> = ({
       key: 'dark',
       label: 'Tối (Dark)',
       onClick: () => setTheme('dark'),
-    },
-  ];
-
-  const fontMenuItems: MenuProps['items'] = [
-    {
-      key: 'font-dec',
-      label: 'Cỡ chữ nhỏ hơn (A-)',
-      onClick: () => setFontSize(Math.max(14, fontSize - 2)),
-    },
-    {
-      key: 'font-cur',
-      label: `Cỡ chữ hiện tại: ${fontSize}px`,
-      disabled: true,
-    },
-    {
-      key: 'font-inc',
-      label: 'Cỡ chữ lớn hơn (A+)',
-      onClick: () => setFontSize(Math.min(32, fontSize + 2)),
-    },
-    {
-      type: 'divider',
-    },
-    {
-      key: 'mode-toggle',
-      label: readingMode === 'continuous' ? 'Chế độ: Cuộn dọc' : 'Chế độ: Lật trang',
-      onClick: () =>
-        setReadingMode(readingMode === 'continuous' ? 'paginated' : 'continuous'),
     },
   ];
 
@@ -184,16 +158,14 @@ export const Navbar: React.FC<NavbarProps> = ({
           </Tooltip>
         )}
 
-        <Dropdown menu={{ items: themeMenuItems }} placement="bottomRight" trigger={['click']}>
-          <Tooltip title="Chế độ màu">
-            <Button type="text" icon={<BgColorsOutlined />} />
+        {onOpenReaderSettings ? (
+          <Tooltip title="Hiển thị (Aa)">
+            <Button type="text" icon={<FontSizeOutlined />} onClick={onOpenReaderSettings} aria-label="Hiển thị" />
           </Tooltip>
-        </Dropdown>
-
-        {currentBookTitle && (
-          <Dropdown menu={{ items: fontMenuItems }} placement="bottomRight" trigger={['click']}>
-            <Tooltip title="Cỡ chữ & Chế độ xem">
-              <Button type="text" icon={<FontSizeOutlined />} />
+        ) : (
+          <Dropdown menu={{ items: themeMenuItems }} placement="bottomRight" trigger={['click']}>
+            <Tooltip title="Chế độ màu">
+              <Button type="text" icon={<BgColorsOutlined />} />
             </Tooltip>
           </Dropdown>
         )}

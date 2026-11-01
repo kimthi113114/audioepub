@@ -50,6 +50,10 @@ interface VoiceDrawerProps {
   onDownloadKokoroModel?: (onProgress?: (percent: number) => void) => Promise<void>;
 }
 
+// Simple-first ordering: recommended, on-device, then advanced engines (Kokoro needs WebGPU)
+const TAB_ORDER = ["edge", "system", "kokoro", "vieneu"];
+const HAS_WEBGPU = typeof navigator !== "undefined" && "gpu" in navigator;
+
 export const VoiceDrawer: React.FC<VoiceDrawerProps> = ({
   open,
   onClose,
@@ -242,13 +246,13 @@ export const VoiceDrawer: React.FC<VoiceDrawerProps> = ({
         activeKey={activeTab}
         onChange={setActiveTab}
         size="small"
-        items={[
+        items={([
           // TAB 1: EDGE STUDIO NEURAL
           {
             key: 'edge',
             label: (
               <span style={{ fontSize: 13, fontWeight: 600 }}>
-                🌟 AI Studio
+                🌟 Khuyên dùng
               </span>
             ),
             children: (
@@ -370,7 +374,7 @@ export const VoiceDrawer: React.FC<VoiceDrawerProps> = ({
             key: 'kokoro',
             label: (
               <span style={{ fontSize: 13, fontWeight: 600 }}>
-                🌸 Kokoro AI
+                🌸 Nâng cao: Kokoro
               </span>
             ),
             children: (
@@ -542,7 +546,7 @@ export const VoiceDrawer: React.FC<VoiceDrawerProps> = ({
             key: 'vieneu',
             label: (
               <span style={{ fontSize: 13, fontWeight: 600 }}>
-                🚀 VieNeu 48kHz
+                🚀 Nâng cao: VieNeu
               </span>
             ),
             children: (
@@ -669,7 +673,7 @@ export const VoiceDrawer: React.FC<VoiceDrawerProps> = ({
             key: 'system',
             label: (
               <span style={{ fontSize: 13, fontWeight: 500 }}>
-                📱 Trình duyệt
+                📱 Trên máy
               </span>
             ),
             children: (
@@ -743,7 +747,7 @@ export const VoiceDrawer: React.FC<VoiceDrawerProps> = ({
               </div>
             ),
           },
-        ]}
+        ]).filter((t) => t.key !== "kokoro" || HAS_WEBGPU).sort((a, b) => TAB_ORDER.indexOf(a.key) - TAB_ORDER.indexOf(b.key))}
       />
     </Drawer>
   );
