@@ -304,11 +304,26 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
     const container = viewerRef.current;
     const iframe = container?.querySelector('iframe');
     if (!container || !iframe) return 0;
-    const top = container.getBoundingClientRect().top;
-    const offset = iframe.getBoundingClientRect().top;
+    const box = container.getBoundingClientRect();
+    const frame = iframe.getBoundingClientRect();
     const elements = currentSentenceElementsRef.current;
+
+    if (readingModeRef.current === 'paginated') {
+      // The iframe spans every page side by side: the current page is the horizontal window of the wrapper.
+      // First sentence with a line box that starts on this page (a sentence continuing from the previous
+      // page counts, so reading starts at its beginning).
+      for (let i = 0; i < elements.length; i++) {
+        const rects = elements[i].getClientRects();
+        for (let r = 0; r < rects.length; r++) {
+          const left = rects[r].left + frame.left - box.left;
+          if (left >= -2 && left < box.width - 8) return i;
+        }
+      }
+      return 0;
+    }
+
     for (let i = 0; i < elements.length; i++) {
-      if (elements[i].getBoundingClientRect().top + offset >= top) return i;
+      if (elements[i].getBoundingClientRect().top + frame.top >= box.top) return i;
     }
     return 0;
   }, []);
