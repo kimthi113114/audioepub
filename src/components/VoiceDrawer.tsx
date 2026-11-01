@@ -220,7 +220,7 @@ export const VoiceDrawer: React.FC<VoiceDrawerProps> = ({
     if (lower.includes('google') || lower.includes('android')) {
       return <AndroidOutlined style={{ color: '#34a853', fontSize: 16 }} />;
     }
-    return <SoundOutlined style={{ color: '#64748b', fontSize: 16 }} />;
+    return <SoundOutlined style={{ color: 'var(--muted)', fontSize: 16 }} />;
   };
 
   return (
@@ -231,7 +231,7 @@ export const VoiceDrawer: React.FC<VoiceDrawerProps> = ({
       height="78vh"
       title={
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <CustomerServiceFilled style={{ color: '#1677ff', fontSize: 18 }} />
+          <CustomerServiceFilled style={{ color: 'var(--primary)', fontSize: 18 }} />
           <span style={{ fontWeight: 700, fontSize: 16 }}>Chọn Giọng Đọc Sách</span>
         </div>
       }
@@ -272,7 +272,7 @@ export const VoiceDrawer: React.FC<VoiceDrawerProps> = ({
                         Microsoft Studio Neural (24kHz HD)
                       </span>
                     </div>
-                    <Text style={{ fontSize: 11, color: '#475569' }}>
+                    <Text style={{ fontSize: 11, color: 'var(--muted)' }}>
                       Giọng đọc tự nhiên chất lượng cao nhất, 0MB tải về, hỗ trợ chạy ngầm màn hình khóa iOS Safari.
                     </Text>
                   </Space>
@@ -299,8 +299,8 @@ export const VoiceDrawer: React.FC<VoiceDrawerProps> = ({
                           padding: '10px 12px',
                           borderRadius: 8,
                           marginBottom: 8,
-                          background: isSelected ? '#e6f4ff' : '#f8fafc',
-                          border: isSelected ? '1.5px solid #1677ff' : '1px solid #f1f5f9',
+                          background: isSelected ? 'var(--primary-soft)' : 'var(--surface-alt)',
+                          border: isSelected ? '1.5px solid var(--primary)' : '1px solid #f1f5f9',
                         }}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 10 }}>
@@ -310,7 +310,7 @@ export const VoiceDrawer: React.FC<VoiceDrawerProps> = ({
                                 width: 36,
                                 height: 36,
                                 borderRadius: '50%',
-                                background: voice.gender === 'female' ? '#fff0f6' : '#e6f4ff',
+                                background: voice.gender === 'female' ? '#fff0f6' : 'var(--primary-soft)',
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
@@ -321,20 +321,20 @@ export const VoiceDrawer: React.FC<VoiceDrawerProps> = ({
                               {voice.gender === 'female' ? (
                                 <WomanOutlined style={{ color: '#eb2f96', fontSize: 18 }} />
                               ) : (
-                                <ManOutlined style={{ color: '#1677ff', fontSize: 18 }} />
+                                <ManOutlined style={{ color: 'var(--primary)', fontSize: 18 }} />
                               )}
                             </div>
 
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                                <span style={{ fontWeight: 700, fontSize: 14, color: '#0f172a' }}>
+                                <span style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)' }}>
                                   {voice.name}
                                 </span>
                                 <Tag color={voice.color} style={{ borderRadius: 6, fontSize: 10, padding: '0 4px' }}>
                                   {voice.region}
                                 </Tag>
                               </div>
-                              <div style={{ fontSize: 11, color: '#64748b', marginTop: 2, lineHeight: 1.3 }}>
+                              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2, lineHeight: 1.3 }}>
                                 {voice.description}
                               </div>
                             </div>
@@ -401,7 +401,7 @@ export const VoiceDrawer: React.FC<VoiceDrawerProps> = ({
                         </Tag>
                       )}
                     </div>
-                    <Text style={{ fontSize: 11, color: '#475569' }}>
+                    <Text style={{ fontSize: 11, color: 'var(--muted)' }}>
                       Chạy trực tiếp 100% trên trình duyệt điện thoại/máy tính qua WebGPU/WASM, không cần mạng internet.
                     </Text>
 
@@ -466,7 +466,7 @@ export const VoiceDrawer: React.FC<VoiceDrawerProps> = ({
                           padding: '10px 12px',
                           borderRadius: 8,
                           marginBottom: 8,
-                          background: isSelected ? '#fff0f6' : '#f8fafc',
+                          background: isSelected ? '#fff0f6' : 'var(--surface-alt)',
                           border: isSelected ? '1.5px solid #eb2f96' : '1px solid #f1f5f9',
                         }}
                       >
@@ -477,7 +477,7 @@ export const VoiceDrawer: React.FC<VoiceDrawerProps> = ({
                                 width: 36,
                                 height: 36,
                                 borderRadius: '50%',
-                                background: voice.gender === 'female' ? '#fff0f6' : '#e6f4ff',
+                                background: voice.gender === 'female' ? '#fff0f6' : 'var(--primary-soft)',
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
@@ -488,20 +488,20 @@ export const VoiceDrawer: React.FC<VoiceDrawerProps> = ({
                               {voice.gender === 'female' ? (
                                 <WomanOutlined style={{ color: '#eb2f96', fontSize: 18 }} />
                               ) : (
-                                <ManOutlined style={{ color: '#1677ff', fontSize: 18 }} />
+                                <ManOutlined style={{ color: 'var(--primary)', fontSize: 18 }} />
                               )}
                             </div>
 
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                                <span style={{ fontWeight: 700, fontSize: 14, color: '#0f172a' }}>
+                                <span style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)' }}>
                                   {voice.name}
                                 </span>
                                 <Tag color={voice.color} style={{ borderRadius: 6, fontSize: 10, padding: '0 4px' }}>
                                   {voice.region}
                                 </Tag>
                               </div>
-                              <div style={{ fontSize: 11, color: '#64748b', marginTop: 2, lineHeight: 1.3 }}>
+                              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2, lineHeight: 1.3 }}>
                                 {voice.description}
                               </div>
                             </div>
@@ -566,7 +566,7 @@ export const VoiceDrawer: React.FC<VoiceDrawerProps> = ({
                         VieNeu-TTS (48kHz Master HD)
                       </span>
                     </div>
-                    <Text style={{ fontSize: 11, color: '#475569' }}>
+                    <Text style={{ fontSize: 11, color: 'var(--muted)' }}>
                       Chất âm 48kHz trong trẻo, biểu cảm giọng nói tự nhiên hàng đầu cho sách nói tiếng Việt.
                     </Text>
                   </Space>
@@ -593,7 +593,7 @@ export const VoiceDrawer: React.FC<VoiceDrawerProps> = ({
                           padding: '10px 12px',
                           borderRadius: 8,
                           marginBottom: 8,
-                          background: isSelected ? '#e6fffb' : '#f8fafc',
+                          background: isSelected ? '#e6fffb' : 'var(--surface-alt)',
                           border: isSelected ? '1.5px solid #13c2c2' : '1px solid #f1f5f9',
                         }}
                       >
@@ -604,7 +604,7 @@ export const VoiceDrawer: React.FC<VoiceDrawerProps> = ({
                                 width: 36,
                                 height: 36,
                                 borderRadius: '50%',
-                                background: voice.gender === 'female' ? '#fff0f6' : '#e6f4ff',
+                                background: voice.gender === 'female' ? '#fff0f6' : 'var(--primary-soft)',
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
@@ -615,20 +615,20 @@ export const VoiceDrawer: React.FC<VoiceDrawerProps> = ({
                               {voice.gender === 'female' ? (
                                 <WomanOutlined style={{ color: '#eb2f96', fontSize: 18 }} />
                               ) : (
-                                <ManOutlined style={{ color: '#1677ff', fontSize: 18 }} />
+                                <ManOutlined style={{ color: 'var(--primary)', fontSize: 18 }} />
                               )}
                             </div>
 
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                                <span style={{ fontWeight: 700, fontSize: 14, color: '#0f172a' }}>
+                                <span style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)' }}>
                                   {voice.name}
                                 </span>
                                 <Tag color={voice.color} style={{ borderRadius: 6, fontSize: 10, padding: '0 4px' }}>
                                   {voice.region}
                                 </Tag>
                               </div>
-                              <div style={{ fontSize: 11, color: '#64748b', marginTop: 2, lineHeight: 1.3 }}>
+                              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2, lineHeight: 1.3 }}>
                                 {voice.description}
                               </div>
                             </div>
@@ -708,8 +708,8 @@ export const VoiceDrawer: React.FC<VoiceDrawerProps> = ({
                           padding: '8px 10px',
                           borderRadius: 6,
                           marginBottom: 6,
-                          background: isSelected ? '#e6f4ff' : '#f8fafc',
-                          border: isSelected ? '1px solid #1677ff' : '1px solid #f1f5f9',
+                          background: isSelected ? 'var(--primary-soft)' : 'var(--surface-alt)',
+                          border: isSelected ? '1px solid var(--primary)' : '1px solid #f1f5f9',
                         }}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 8 }}>
@@ -719,7 +719,7 @@ export const VoiceDrawer: React.FC<VoiceDrawerProps> = ({
                               <div style={{ fontWeight: 600, fontSize: 13 }}>
                                 {info.displayName}
                               </div>
-                              <div style={{ fontSize: 10, color: '#94a3b8' }}>
+                              <div style={{ fontSize: 10, color: 'var(--muted)' }}>
                                 {voice.name}
                               </div>
                             </div>

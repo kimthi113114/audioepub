@@ -13,6 +13,7 @@ import { IOSGuideModal } from './components/iOSGuideModal';
 import { VoiceModal } from './components/VoiceModal';
 import { VoiceDrawer } from './components/VoiceDrawer';
 import { ReaderSettingsSheet } from './components/ReaderSettingsSheet';
+import { getPalette } from './theme/palettes';
 
 export const App: React.FC = () => {
   const { theme } = useSettingsStore();
@@ -92,9 +93,23 @@ export const App: React.FC = () => {
     loadBooks();
   }, [loadBooks]);
 
-  // Update body theme class
+  // Publish the palette as CSS variables (shared by every component, including inline styles)
   useEffect(() => {
+    const p = getPalette(theme);
+    const style = document.documentElement.style;
+    style.setProperty('--bg', p.page);
+    style.setProperty('--surface', p.surface);
+    style.setProperty('--surface-alt', p.surfaceAlt);
+    style.setProperty('--border', p.border);
+    style.setProperty('--text', p.text);
+    style.setProperty('--muted', p.muted);
+    style.setProperty('--primary', p.primary);
+    style.setProperty('--primary-soft', p.primarySoft);
+    style.setProperty('--highlight', p.highlight);
+    style.setProperty('--shadow', p.shadow);
+    style.colorScheme = theme === 'dark' ? 'dark' : 'light';
     document.body.className = `theme-${theme}`;
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', p.page);
   }, [theme]);
 
   // Handle select book to read
@@ -149,40 +164,34 @@ export const App: React.FC = () => {
     setChapterInfo({ title, index, total });
   }, []);
 
-  const barBg =
-    theme === 'dark' ? '#0f172a' : theme === 'sepia' ? '#fbf0d9' : '#ffffff';
+  const barBg = getPalette(theme).surface;
 
   // Ant Design v5 Theme Configuration
   const getThemeConfig = () => {
-    if (theme === 'dark') {
-      return {
-        algorithm: antdTheme.darkAlgorithm,
-        token: {
-          colorPrimary: '#1677ff',
-          colorBgBase: '#0f172a',
-          colorTextBase: '#f1f5f9',
-          borderRadius: 8,
-        },
-      };
-    }
-    if (theme === 'sepia') {
-      return {
-        algorithm: antdTheme.defaultAlgorithm,
-        token: {
-          colorPrimary: '#d97706',
-          colorBgBase: '#fbf0d9',
-          colorTextBase: '#5f4b32',
-          borderRadius: 8,
-        },
-      };
-    }
+    const p = getPalette(theme);
     return {
-      algorithm: antdTheme.defaultAlgorithm,
+      algorithm: theme === 'dark' ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
       token: {
-        colorPrimary: '#1677ff',
-        colorBgBase: '#f8fafc',
-        colorTextBase: '#1e293b',
-        borderRadius: 8,
+        colorPrimary: p.primary,
+        colorLink: p.primary,
+        colorInfo: p.primary,
+        colorBgBase: p.page,
+        colorBgLayout: p.page,
+        colorBgContainer: p.surface,
+        colorBgElevated: p.surface,
+        colorFillSecondary: p.surfaceAlt,
+        colorBorder: p.border,
+        colorBorderSecondary: p.border,
+        colorText: p.text,
+        colorTextBase: p.text,
+        colorTextSecondary: p.muted,
+        colorTextDescription: p.muted,
+        borderRadius: 12,
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+      },
+      components: {
+        Button: { fontWeight: 500, primaryShadow: 'none', defaultShadow: 'none' },
+        Drawer: { colorBgElevated: p.surface },
       },
     };
   };

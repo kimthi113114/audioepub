@@ -73,13 +73,11 @@ export const Navbar: React.FC<NavbarProps> = ({
         padding: '0 12px',
         paddingTop: 'var(--sat, 0px)',
         height: 'calc(56px + var(--sat, 0px))',
-        borderBottom: '1px solid rgba(0,0,0,0.08)',
-        background: 'inherit',
+        borderBottom: '1px solid var(--border)',
+        background: 'var(--surface)',
         position: 'sticky',
         top: 0,
         zIndex: 100,
-        backdropFilter: 'blur(10px)',
-        WebkitBackdropFilter: 'blur(10px)',
       }}
     >
       {/* Left: Brand or Back Button */}
@@ -95,7 +93,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </Button>
         ) : (
           <Space align="center" size={6} style={{ flexShrink: 0 }}>
-            <BookOutlined style={{ fontSize: 20, color: '#1677ff' }} />
+            <BookOutlined style={{ fontSize: 20, color: 'var(--primary)' }} />
             <Text
               strong
               style={{
@@ -150,7 +148,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <Button
               id="btn-voice-modal"
               type="text"
-              icon={<CustomerServiceOutlined style={{ color: '#1677ff' }} />}
+              icon={<CustomerServiceOutlined style={{ color: 'var(--primary)' }} />}
               onClick={onOpenVoiceModal}
               aria-label="Chọn & Nghe thử giọng đọc"
               style={{ fontSize: 16 }}

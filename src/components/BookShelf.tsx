@@ -151,10 +151,12 @@ export const BookShelf: React.FC<BookShelfProps> = ({
                   height: '100%',
                   display: 'flex',
                   flexDirection: 'column',
-                  borderRadius: 10,
+                  borderRadius: 16,
                   overflow: 'hidden',
                   cursor: 'pointer',
-                  boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+                  border: '1px solid var(--border)',
+                  background: 'var(--surface)',
+                  boxShadow: 'var(--shadow)',
                 }}
                 styles={{
                   body: {
@@ -169,7 +171,7 @@ export const BookShelf: React.FC<BookShelfProps> = ({
                     onClick={() => onSelectBook(book)}
                     style={{
                       height: 180,
-                      background: '#f1f5f9',
+                      background: 'linear-gradient(150deg, color-mix(in srgb, var(--primary) 82%, #000), color-mix(in srgb, var(--primary) 42%, var(--surface-alt)))',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -190,9 +192,11 @@ export const BookShelf: React.FC<BookShelfProps> = ({
                         }}
                       />
                     ) : (
-                      <div style={{ textAlign: 'center', color: '#94a3b8' }}>
-                        <FileTextOutlined style={{ fontSize: 40 }} />
-                        <div style={{ fontSize: 11, marginTop: 4 }}>Không có bìa</div>
+                      <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.92)', padding: '0 14px' }}>
+                        <FileTextOutlined style={{ fontSize: 34, opacity: 0.85 }} />
+                        <div style={{ fontSize: 13, marginTop: 8, fontWeight: 600, lineHeight: 1.3, wordBreak: 'break-word' }}>
+                          {book.title.length > 36 ? book.title.slice(0, 36) + '…' : book.title}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -221,7 +225,7 @@ export const BookShelf: React.FC<BookShelfProps> = ({
                       display: 'flex',
                       justifyContent: 'space-between',
                       fontSize: 11,
-                      color: '#64748b',
+                      color: 'var(--muted)',
                       marginBottom: 4,
                     }}
                   >
@@ -232,7 +236,7 @@ export const BookShelf: React.FC<BookShelfProps> = ({
                     percent={Math.round(book.progressPercent || 0)}
                     size="small"
                     showInfo={false}
-                    strokeColor="#1677ff"
+                    strokeColor="var(--primary)"
                   />
 
                   <div
@@ -302,12 +306,12 @@ export const BookShelf: React.FC<BookShelfProps> = ({
               style={{ padding: 24, borderRadius: 8 }}
             >
               <p className="ant-upload-drag-icon">
-                <InboxOutlined style={{ fontSize: 44, color: '#1677ff' }} />
+                <InboxOutlined style={{ fontSize: 44, color: 'var(--primary)' }} />
               </p>
               <p className="ant-upload-text" style={{ fontSize: 16 }}>
                 Kéo thả file .epub vào đây hoặc bấm để chọn tệp
               </p>
-              <p className="ant-upload-hint" style={{ fontSize: 13, color: '#64748b' }}>
+              <p className="ant-upload-hint" style={{ fontSize: 13, color: 'var(--muted)' }}>
                 File được lưu trữ trực tiếp vào IndexedDB trên máy của bạn, hoàn toàn bảo mật và hoạt động không cần mạng!
               </p>
             </Dragger>

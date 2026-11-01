@@ -232,7 +232,7 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
     if (lower.includes('google') || lower.includes('android')) {
       return <AndroidOutlined style={{ color: '#34a853', fontSize: 16 }} />;
     }
-    return <SoundOutlined style={{ color: '#64748b', fontSize: 16 }} />;
+    return <SoundOutlined style={{ color: 'var(--muted)', fontSize: 16 }} />;
   };
 
   return (
@@ -251,17 +251,17 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              color: '#fff',
+              color: 'var(--surface)',
               fontSize: 18,
             }}
           >
             <CustomerServiceOutlined />
           </div>
           <div>
-            <div style={{ fontWeight: 700, fontSize: 17, color: '#1e293b' }}>
+            <div style={{ fontWeight: 700, fontSize: 17, color: 'var(--text)' }}>
               Trung Tâm Giọng Đọc Sách
             </div>
-            <div style={{ fontSize: 12, color: '#64748b', fontWeight: 400 }}>
+            <div style={{ fontSize: 12, color: 'var(--muted)', fontWeight: 400 }}>
               Công nghệ TTS Đa Động Cơ • Studio Neural 24kHz • Kokoro WebGPU Client • VieNeu 48kHz
             </div>
           </div>
@@ -309,7 +309,7 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                         100% Miễn Phí
                       </Tag>
                     </div>
-                    <Text style={{ fontSize: 12, color: '#475569' }}>
+                    <Text style={{ fontSize: 12, color: 'var(--muted)' }}>
                       Công nghệ tổng hợp âm thanh giọng nói thế hệ mới: Đọc truyền cảm, ngắt nghỉ đúng ngữ điệu dấu câu tiếng Việt, không bị rè hoặc mất dấu. Hỗ trợ chạy ngầm mượt mà trên iPhone, Android và Máy tính.
                     </Text>
                   </Space>
@@ -336,8 +336,8 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                           padding: '12px 16px',
                           borderRadius: 10,
                           marginBottom: 8,
-                          background: isSelected ? '#e6f4ff' : '#f8fafc',
-                          border: isSelected ? '1.5px solid #1677ff' : '1px solid #f1f5f9',
+                          background: isSelected ? 'var(--primary-soft)' : 'var(--surface-alt)',
+                          border: isSelected ? '1.5px solid var(--primary)' : '1px solid #f1f5f9',
                           transition: 'all 0.2s ease',
                         }}
                       >
@@ -356,7 +356,7 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                                 width: 42,
                                 height: 42,
                                 borderRadius: '50%',
-                                background: voice.gender === 'female' ? '#fff0f6' : '#e6f4ff',
+                                background: voice.gender === 'female' ? '#fff0f6' : 'var(--primary-soft)',
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
@@ -367,13 +367,13 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                               {voice.gender === 'female' ? (
                                 <WomanOutlined style={{ color: '#eb2f96', fontSize: 20 }} />
                               ) : (
-                                <ManOutlined style={{ color: '#1677ff', fontSize: 20 }} />
+                                <ManOutlined style={{ color: 'var(--primary)', fontSize: 20 }} />
                               )}
                             </div>
 
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                                <span style={{ fontWeight: 700, fontSize: 15, color: '#0f172a' }}>
+                                <span style={{ fontWeight: 700, fontSize: 15, color: 'var(--text)' }}>
                                   {voice.name}
                                 </span>
                                 {voice.isRecommended && (
@@ -385,7 +385,7 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                                   {voice.badge}
                                 </Tag>
                               </div>
-                              <div style={{ fontSize: 12, color: '#64748b', marginTop: 3, lineHeight: 1.4 }}>
+                              <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 3, lineHeight: 1.4 }}>
                                 {voice.description}
                               </div>
                             </div>
@@ -465,7 +465,7 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                       </Space>
                     </div>
 
-                    <Text style={{ fontSize: 12, color: '#475569' }}>
+                    <Text style={{ fontSize: 12, color: 'var(--muted)' }}>
                       Công nghệ WebGPU/WASM đưa trí tuệ nhân tạo chạy hoàn toàn bên trong trình duyệt máy khách (Client-side). Không gửi văn bản ra ngoài máy chủ, hoàn toàn riêng tư, đọc sách ngay cả khi máy bay không có mạng internet.
                     </Text>
 
@@ -475,7 +475,7 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                         style={{
                           marginTop: 6,
                           padding: '10px 14px',
-                          background: '#fff',
+                          background: 'var(--surface)',
                           borderRadius: 8,
                           border: '1px solid #ffd6e7',
                           display: 'flex',
@@ -550,7 +550,7 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                           padding: '12px 16px',
                           borderRadius: 10,
                           marginBottom: 8,
-                          background: isSelected ? '#fff0f6' : '#f8fafc',
+                          background: isSelected ? '#fff0f6' : 'var(--surface-alt)',
                           border: isSelected ? '1.5px solid #eb2f96' : '1px solid #f1f5f9',
                           transition: 'all 0.2s ease',
                         }}
@@ -570,7 +570,7 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                                 width: 42,
                                 height: 42,
                                 borderRadius: '50%',
-                                background: voice.gender === 'female' ? '#fff0f6' : '#e6f4ff',
+                                background: voice.gender === 'female' ? '#fff0f6' : 'var(--primary-soft)',
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
@@ -581,13 +581,13 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                               {voice.gender === 'female' ? (
                                 <WomanOutlined style={{ color: '#eb2f96', fontSize: 20 }} />
                               ) : (
-                                <ManOutlined style={{ color: '#1677ff', fontSize: 20 }} />
+                                <ManOutlined style={{ color: 'var(--primary)', fontSize: 20 }} />
                               )}
                             </div>
 
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                                <span style={{ fontWeight: 700, fontSize: 15, color: '#0f172a' }}>
+                                <span style={{ fontWeight: 700, fontSize: 15, color: 'var(--text)' }}>
                                   {voice.name}
                                 </span>
                                 {voice.isRecommended && (
@@ -599,7 +599,7 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                                   {voice.badge}
                                 </Tag>
                               </div>
-                              <div style={{ fontSize: 12, color: '#64748b', marginTop: 3, lineHeight: 1.4 }}>
+                              <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 3, lineHeight: 1.4 }}>
                                 {voice.description}
                               </div>
                             </div>
@@ -674,7 +674,7 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                         Ngữ điệu biểu cảm
                       </Tag>
                     </div>
-                    <Text style={{ fontSize: 12, color: '#475569' }}>
+                    <Text style={{ fontSize: 12, color: 'var(--muted)' }}>
                       Công nghệ tổng hợp giọng nói tiếng Việt độ phân giải 48kHz cao nhất hiện nay, mô phỏng chính xác thanh điệu, dấu câu và cảm xúc người đọc sách chuyên nghiệp. Hỗ trợ hàng đợi Lookahead đệm trước câu tiếp theo với độ trễ chuyển đổi 0ms.
                     </Text>
                   </Space>
@@ -701,7 +701,7 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                           padding: '12px 16px',
                           borderRadius: 10,
                           marginBottom: 8,
-                          background: isSelected ? '#e6fffb' : '#f8fafc',
+                          background: isSelected ? '#e6fffb' : 'var(--surface-alt)',
                           border: isSelected ? '1.5px solid #13c2c2' : '1px solid #f1f5f9',
                           transition: 'all 0.2s ease',
                         }}
@@ -721,7 +721,7 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                                 width: 42,
                                 height: 42,
                                 borderRadius: '50%',
-                                background: voice.gender === 'female' ? '#fff0f6' : '#e6f4ff',
+                                background: voice.gender === 'female' ? '#fff0f6' : 'var(--primary-soft)',
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
@@ -732,13 +732,13 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                               {voice.gender === 'female' ? (
                                 <WomanOutlined style={{ color: '#eb2f96', fontSize: 20 }} />
                               ) : (
-                                <ManOutlined style={{ color: '#1677ff', fontSize: 20 }} />
+                                <ManOutlined style={{ color: 'var(--primary)', fontSize: 20 }} />
                               )}
                             </div>
 
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                                <span style={{ fontWeight: 700, fontSize: 15, color: '#0f172a' }}>
+                                <span style={{ fontWeight: 700, fontSize: 15, color: 'var(--text)' }}>
                                   {voice.name}
                                 </span>
                                 {voice.isRecommended && (
@@ -750,7 +750,7 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                                   {voice.badge}
                                 </Tag>
                               </div>
-                              <div style={{ fontSize: 12, color: '#64748b', marginTop: 3, lineHeight: 1.4 }}>
+                              <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 3, lineHeight: 1.4 }}>
                                 {voice.description}
                               </div>
                             </div>
@@ -825,7 +825,7 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                     style={{
                       fontSize: 13,
                       fontWeight: 600,
-                      color: '#475569',
+                      color: 'var(--muted)',
                       marginBottom: 8,
                       display: 'flex',
                       alignItems: 'center',
@@ -836,7 +836,7 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                   </div>
 
                   {filteredSystemVNVoices.length === 0 ? (
-                    <div style={{ textAlign: 'center', padding: '16px', color: '#94a3b8' }}>
+                    <div style={{ textAlign: 'center', padding: '16px', color: 'var(--muted)' }}>
                       Không tìm thấy giọng tiếng Việt nào trong hệ thống
                     </div>
                   ) : (
@@ -854,8 +854,8 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                               padding: '10px 14px',
                               borderRadius: 8,
                               marginBottom: 6,
-                              background: isSelected ? '#e6f4ff' : '#f8fafc',
-                              border: isSelected ? '1.5px solid #1677ff' : '1px solid #f1f5f9',
+                              background: isSelected ? 'var(--primary-soft)' : 'var(--surface-alt)',
+                              border: isSelected ? '1.5px solid var(--primary)' : '1px solid #f1f5f9',
                             }}
                           >
                             <div
@@ -871,14 +871,14 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                                 {renderPlatformIcon(voice.name)}
                                 <div style={{ overflow: 'hidden' }}>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                    <span style={{ fontWeight: 600, fontSize: 14, color: '#1e293b' }}>
+                                    <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--text)' }}>
                                       {info.displayName}
                                     </span>
                                     <Tag color={info.color} style={{ borderRadius: 6, fontSize: 11 }}>
                                       {info.badge}
                                     </Tag>
                                   </div>
-                                  <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
+                                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
                                     {voice.name}
                                   </div>
                                 </div>
@@ -912,7 +912,7 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
 
                 {otherVoices.length > 0 && (
                   <div>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: '#475569', marginBottom: 8 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--muted)', marginBottom: 8 }}>
                       <GlobalOutlined style={{ marginRight: 6 }} /> Giọng Quốc Tế ({otherVoices.length})
                     </div>
                     <List
@@ -928,7 +928,7 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                               padding: '8px 12px',
                               borderRadius: 6,
                               marginBottom: 4,
-                              background: isSelected ? '#e6f4ff' : '#f8fafc',
+                              background: isSelected ? 'var(--primary-soft)' : 'var(--surface-alt)',
                             }}
                           >
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>

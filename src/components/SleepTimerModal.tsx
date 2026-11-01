@@ -33,7 +33,7 @@ export const SleepTimerModal: React.FC<SleepTimerModalProps> = ({
     <Modal
       title={
         <Space>
-          <ClockCircleOutlined style={{ color: '#1677ff' }} />
+          <ClockCircleOutlined style={{ color: 'var(--primary)' }} />
           <span>Hẹn giờ tắt (Sleep Timer)</span>
         </Space>
       }
@@ -49,7 +49,7 @@ export const SleepTimerModal: React.FC<SleepTimerModalProps> = ({
             style={{
               textAlign: 'center',
               padding: '20px',
-              background: '#f0fdf4',
+              background: 'var(--primary-soft)',
               border: '1px solid #bbf7d0',
               borderRadius: 8,
               marginBottom: 20,
@@ -135,7 +135,7 @@ export const SleepTimerModal: React.FC<SleepTimerModalProps> = ({
         <div
           style={{
             padding: '12px 16px',
-            background: '#f8fafc',
+            background: 'var(--surface-alt)',
             borderRadius: 6,
             display: 'flex',
             alignItems: 'center',

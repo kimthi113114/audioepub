@@ -48,7 +48,7 @@ export const IOSGuideModal: React.FC<IOSGuideModalProps> = ({ open, onClose }) =
                   <b>Tiếng Việt</b> &gt; Chọn <b>Linh (Nâng cao / Tự nhiên)</b> và bấm tải về.
                 </Paragraph>
               ),
-              icon: <SoundOutlined style={{ color: '#1677ff' }} />,
+              icon: <SoundOutlined style={{ color: 'var(--primary)' }} />,
             },
             {
               title: <Text strong>2. Thêm vào Màn hình chính (PWA Fullscreen)</Text>,

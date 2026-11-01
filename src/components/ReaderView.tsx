@@ -13,6 +13,7 @@ import type { Book, Chapter } from '../types';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { splitTextIntoSentences } from '../utils/epubHelper';
 import { db, type BookWithResume } from '../db';
+import { PALETTES, getPalette } from '../theme/palettes';
 
 const { Text } = Typography;
 
@@ -131,8 +132,8 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
     sentenceIdxRef.current = currentSentenceIndex;
   });
 
-  const barBg =
-    theme === 'dark' ? 'rgba(15,23,42,0.96)' : theme === 'sepia' ? 'rgba(251,240,217,0.96)' : 'rgba(255,255,255,0.96)';
+  const pal = getPalette(theme);
+  const barBg = pal.bar;
 
   // References to rendered sentence elements for DOM highlighting
   const currentSentenceElementsRef = useRef<HTMLElement[]>([]);
@@ -398,74 +399,35 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
 
         // Theme registration with safety check
         try {
-          rendition.themes.register('light', {
-            body: {
-              background: '#ffffff',
-              color: '#1e293b',
-              'font-family': fontFamily,
-              'font-size': `${fontSize}px`,
-              'line-height': `${lineHeight}`,
-              padding: '20px 24px 56px',
-              cursor: 'pointer',
-              'touch-action': 'manipulation',
-            },
-            '.tts-active-sentence': {
-              'background-color': 'rgba(250, 204, 21, 0.45) !important',
-              'border-radius': '4px',
-              'box-shadow': '0 0 0 2px rgba(250, 204, 21, 0.45) !important',
-              transition: 'background-color 0.25s ease',
-            },
-            '.tts-sentence': {
-              cursor: 'pointer',
-              'touch-action': 'manipulation',
-            },
-          });
-
-          rendition.themes.register('sepia', {
-            body: {
-              background: '#fbf0d9',
-              color: '#5f4b32',
-              'font-family': fontFamily,
-              'font-size': `${fontSize}px`,
-              'line-height': `${lineHeight}`,
-              padding: '20px 24px 56px',
-              cursor: 'pointer',
-              'touch-action': 'manipulation',
-            },
-            '.tts-active-sentence': {
-              'background-color': 'rgba(217, 119, 6, 0.35) !important',
-              'border-radius': '4px',
-              'box-shadow': '0 0 0 2px rgba(217, 119, 6, 0.35) !important',
-              transition: 'background-color 0.25s ease',
-            },
-            '.tts-sentence': {
-              cursor: 'pointer',
-              'touch-action': 'manipulation',
-            },
-          });
-
-          rendition.themes.register('dark', {
-            body: {
-              background: '#0f172a',
-              color: '#cbd5e1',
-              'font-family': fontFamily,
-              'font-size': `${fontSize}px`,
-              'line-height': `${lineHeight}`,
-              padding: '20px 24px 56px',
-              cursor: 'pointer',
-              'touch-action': 'manipulation',
-            },
-            '.tts-active-sentence': {
-              'background-color': 'rgba(234, 179, 8, 0.35) !important',
-              'box-shadow': '0 0 0 2px rgba(234, 179, 8, 0.35) !important',
-              color: '#fef08a !important',
-              'border-radius': '4px',
-              transition: 'background-color 0.25s ease',
-            },
-            '.tts-sentence': {
-              cursor: 'pointer',
-              'touch-action': 'manipulation',
-            },
+          (['light', 'sepia', 'dark'] as const).forEach((name) => {
+            const p = PALETTES[name];
+            rendition?.themes.register(name, {
+              body: {
+                background: p.page,
+                color: p.reading,
+                'font-family': fontFamily,
+                'font-size': `${fontSize}px`,
+                'line-height': `${lineHeight}`,
+                padding: '20px 24px 56px',
+                cursor: 'pointer',
+                'touch-action': 'manipulation',
+                '-webkit-font-smoothing': 'antialiased',
+              },
+              '.tts-active-sentence': {
+                'background-color': `${p.highlight} !important`,
+                'border-radius': '6px',
+                'box-decoration-break': 'clone',
+                '-webkit-box-decoration-break': 'clone',
+                padding: '1px 0',
+                transition: 'background-color 0.25s ease',
+                ...(p.highlightText ? { color: `${p.highlightText} !important` } : {}),
+              },
+              '.tts-sentence': {
+                cursor: 'pointer',
+                'touch-action': 'manipulation',
+              },
+              '::selection': { background: p.primarySoft },
+            });
           });
 
           rendition.themes.select(theme);
@@ -893,7 +855,7 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
           justifyContent: 'space-between',
           padding: '6px 12px',
           background: barBg,
-          borderBottom: '1px solid rgba(0,0,0,0.06)',
+          borderBottom: '1px solid var(--border)',
           gap: 8,
           transform: chromeVisible ? 'translateY(0)' : 'translateY(-200%)',
           opacity: chromeVisible ? 1 : 0,
@@ -973,7 +935,7 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
           left: 0,
           height: 3,
           width: `${chapters.length > 1 ? ((currentChapterIndex + 1) / chapters.length) * 100 : 0}%`,
-          background: '#1677ff',
+          background: 'var(--primary)',
           zIndex: 30,
           transition: 'width 0.3s ease',
           pointerEvents: 'none',
@@ -991,7 +953,7 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
           padding: '10px 16px',
           paddingBottom: 'calc(var(--sab, 0px) + 10px)',
           background: barBg,
-          borderTop: '1px solid rgba(0,0,0,0.06)',
+          borderTop: '1px solid var(--border)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
@@ -1031,7 +993,7 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
       <Drawer
         title={
           <Space>
-            <BookOutlined style={{ color: '#1677ff' }} />
+            <BookOutlined style={{ color: 'var(--primary)' }} />
             <span>Mục lục ({chapters.length} chương)</span>
           </Space>
         }
@@ -1102,11 +1064,11 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
                       padding: '0 12px',
                       borderRadius: 6,
                       cursor: 'pointer',
-                      background: isCurrent ? 'rgba(22, 119, 255, 0.1)' : 'transparent',
-                      border: isCurrent ? '1px solid rgba(22, 119, 255, 0.3)' : '1px solid transparent',
+                      background: isCurrent ? 'var(--primary-soft)' : 'transparent',
+                      border: isCurrent ? '1px solid var(--primary)' : '1px solid transparent',
                     }}
                   >
-                    <Text strong={isCurrent} ellipsis style={{ color: isCurrent ? '#1677ff' : 'inherit', fontSize: 14 }}>
+                    <Text strong={isCurrent} ellipsis style={{ color: isCurrent ? 'var(--primary)' : 'inherit', fontSize: 14 }}>
                       {`${idx + 1}. ${c.label}`}
                     </Text>
                   </div>

@@ -32,39 +32,32 @@ body,
   }
 }
 
-/* Theme styles */
-body.theme-light {
-  background-color: #f8fafc;
-  color: #1e293b;
+/* Theme variables are written by App from src/theme/palettes.ts */
+:root {
+  --bg: #fbfaf7;
+  --surface: #ffffff;
+  --surface-alt: #f3f0e9;
+  --border: #e8e3d9;
+  --text: #22252b;
+  --muted: #6d717a;
+  --primary: #4a5fd8;
+  --primary-soft: rgba(74, 95, 216, 0.1);
+  --highlight: rgba(255, 205, 86, 0.55);
+  --shadow: 0 6px 24px rgba(40, 36, 28, 0.1);
 }
 
-body.theme-dark {
-  background-color: #0f172a;
-  color: #f1f5f9;
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+  transition: background-color 0.25s ease, color 0.25s ease;
 }
 
-body.theme-sepia {
-  background-color: #fbf0d9;
-  color: #5f4b32;
-}
-
-/* Custom Highlight for Active TTS sentence */
+/* Highlight of the sentence being spoken (the epub iframe gets the same look from its own theme) */
 .tts-active-sentence {
-  background-color: rgba(250, 204, 21, 0.45) !important;
-  border-radius: 4px;
-  box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.45);
-  transition: background-color 0.25s ease;
-}
-
-body.theme-dark .tts-active-sentence {
-  background-color: rgba(234, 179, 8, 0.35) !important;
-  box-shadow: 0 0 0 2px rgba(234, 179, 8, 0.35);
-  color: #fef08a !important;
-}
-
-body.theme-sepia .tts-active-sentence {
-  background-color: rgba(217, 119, 6, 0.25) !important;
-  box-shadow: 0 0 0 2px rgba(217, 119, 6, 0.25);
+  background-color: var(--highlight) !important;
+  border-radius: 6px;
 }
 
 /* Reader container */
@@ -72,6 +65,7 @@ body.theme-sepia .tts-active-sentence {
   width: 100%;
   height: 100%;
   overflow-y: auto;
+  overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -92,4 +86,9 @@ body.theme-sepia .tts-active-sentence {
 
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(150, 150, 150, 0.5);
+}
+
+/* epub.js scrolled flow can show a stray horizontal scrollbar; pages are turned programmatically */
+.epub-viewer-wrapper .epub-container {
+  overflow-x: hidden !important;
 }
