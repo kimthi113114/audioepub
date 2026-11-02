@@ -93,11 +93,19 @@ export const App: React.FC = () => {
   }, []);
 
   const { selectedVoiceURI, setSelectedVoiceURI } = useSettingsStore();
+  const serverFallbackDone = useRef<boolean>(false);
   useEffect(() => {
-    if (serverTTS !== false || vietnameseVoices.length === 0) return;
-    if (voices.some((v) => v.voiceURI === selectedVoiceURI)) return; // already an on-device voice
+    if (serverFallbackDone.current || serverTTS !== false || vietnameseVoices.length === 0) return;
+    // Only voices that need the server are replaced (Edge / Kokoro / VieNeu). On-device ones (system voices,
+    // V-TTS, Piper) keep working without it.
+    const needsServer =
+      selectedVoiceURI.startsWith('kokoro:') ||
+      selectedVoiceURI.startsWith('vieneu:') ||
+      (/Neural$/.test(selectedVoiceURI) && !voices.some((v) => v.voiceURI === selectedVoiceURI));
+    serverFallbackDone.current = true; // decide once per load; never fight a later manual choice
+    if (!needsServer) return;
     setSelectedVoiceURI(vietnameseVoices[0].voiceURI);
-    message.info('Bản web tĩnh không có giọng AI từ server. Đã chuyển sang giọng Tiếng Việt của thiết bị.');
+    message.info('Bản web tĩnh không có giọng AI từ server. Đã chuyển sang giọng Tiếng Việt của thiết bị. Bạn có thể chọn V-TTS để dùng giọng AI chạy trên máy.');
   }, [serverTTS, vietnameseVoices, voices, selectedVoiceURI, setSelectedVoiceURI]);
 
   // Load books from IndexedDB
