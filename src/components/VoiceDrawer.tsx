@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { SERVER_TABS, useServerAvailable } from '../utils/serverStatus';
 import {
   Drawer,
   Tabs,
@@ -66,6 +67,7 @@ export const VoiceDrawer: React.FC<VoiceDrawerProps> = ({
   isDownloadingKokoro = false,
   onDownloadKokoroModel,
 }) => {
+  const serverAvailable = useServerAvailable();
   const {
     selectedVoiceURI,
     setSelectedVoiceURI,
@@ -246,7 +248,7 @@ export const VoiceDrawer: React.FC<VoiceDrawerProps> = ({
       destroyOnClose
     >
       <Tabs
-        activeKey={activeTab}
+        activeKey={serverAvailable === false && SERVER_TABS.includes(activeTab) ? 'system' : activeTab}
         onChange={setActiveTab}
         size="small"
         items={([
@@ -754,7 +756,7 @@ export const VoiceDrawer: React.FC<VoiceDrawerProps> = ({
               </div>
             ),
           },
-        ]).sort((a, b) => TAB_ORDER.indexOf(a.key) - TAB_ORDER.indexOf(b.key))}
+        ]).filter((t) => serverAvailable !== false || !SERVER_TABS.includes(t.key)).sort((a, b) => TAB_ORDER.indexOf(a.key) - TAB_ORDER.indexOf(b.key))}
       />
     </Drawer>
   );

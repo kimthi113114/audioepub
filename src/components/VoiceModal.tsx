@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { SERVER_TABS, useServerAvailable } from '../utils/serverStatus';
 import {
   Modal,
   Tabs,
@@ -65,6 +66,7 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
   isDownloadingKokoro = false,
   onDownloadKokoroModel,
 }) => {
+  const serverAvailable = useServerAvailable();
   const {
     selectedVoiceURI,
     setSelectedVoiceURI,
@@ -278,7 +280,7 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
       destroyOnClose
     >
       <Tabs
-        activeKey={activeTab}
+        activeKey={serverAvailable === false && SERVER_TABS.includes(activeTab) ? 'system' : activeTab}
         onChange={setActiveTab}
         style={{ marginTop: 8 }}
         items={[
@@ -970,7 +972,7 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
               </div>
             ),
           },
-        ]}
+        ].filter((t) => serverAvailable !== false || !SERVER_TABS.includes(t.key))}
       />
     </Modal>
   );

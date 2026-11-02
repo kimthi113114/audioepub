@@ -1,3 +1,4 @@
+import { setServerStatus } from './utils/serverStatus';
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { ConfigProvider, App as AntdApp, theme as antdTheme, message } from 'antd';
 import type { Book } from './types';
@@ -89,7 +90,10 @@ export const App: React.FC = () => {
     fetch(apiUrl('/api/tts?health=1'))
       .then((r) => r.ok && (r.headers.get('content-type') || '').includes('json'))
       .catch(() => false)
-      .then((ok) => setServerTTS(ok));
+      .then((ok) => {
+        setServerTTS(ok);
+        setServerStatus(ok);
+      });
   }, []);
 
   const { selectedVoiceURI, setSelectedVoiceURI } = useSettingsStore();
