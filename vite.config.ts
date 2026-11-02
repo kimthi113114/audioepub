@@ -11,6 +11,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 export default defineConfig({
   // Relative asset URLs: the same build works at a domain root and under a sub-path (GitHub Pages)
   base: './',
+  // Cross-origin isolation enables SharedArrayBuffer -> multi-threaded WASM for V-TTS (also on the LAN over http)
+  server: {
+    headers: {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+    },
+  },
   plugins: [
     react(),
     {

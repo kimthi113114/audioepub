@@ -17,16 +17,21 @@ No test runner is configured; verification is `tsc -b`, `vite build`, `oxlint`, 
 
 AudioEpub is a client-side React 19 + AntD + Zustand app for reading EPUBs and listening via TTS (Vietnamese-focused). Books/bookmarks persist in IndexedDB via Dexie (`src/db`), settings in `src/store/useSettingsStore.ts`.
 
-**Multi-engine TTS** is the core complexity. `src/hooks/useTTS.ts` orchestrates all engines (`engineMode`: `edge | kokoro | vieneu | neural (Piper) | system (Web Speech)`), with one service per engine in `src/services/`:
-- `edgeTTSService` — fetches MP3 from the server-side `/api/tts` (Microsoft Edge neural voices).
-- `kokoroClientService` — Kokoro-82M running in-browser (WebGPU/ONNX).
-- `vieneuService` — VieNeu-TTS via the server (backed by the local Python worker).
+**Multi-engine TTS** is the core complexity. `src/hooks/useTTS.ts` orchestrates all engines (`engineMode`: `edge | kokoro | vieneu | vtts | neural (Piper) | system (Web Speech)`), with one service per engine in `src/services/`:
+- `edgeTTSService` — MP3 from `/api/tts` (Microsoft Edge neural voices).
+- `kokoroClientService` — Kokoro-Vietnamese via `/api/tts` (server-side Python worker, despite the name).
+- `vieneuService` — VieNeu-TTS via `/api/tts`; the user picks Nano (24 kHz) or Turbo (48 kHz) in settings (`vieneuMode`); the worker loads one model at a time.
+- `vttsService` — V-TTS (VITS, ONNX Runtime Web) running **in the browser**, ~175 MB downloaded once into Cache Storage; fast only when the page is cross-origin isolated (Vite dev headers / `public/coi-serviceworker.js` on static hosts). License of the model is non-commercial.
 - `piperService` — Piper VITS in-browser via ONNX wasm served from `/onnx/`.
-- `lookaheadQueue` — prefetches sentence N+1 audio blobs while N plays and revokes object URLs to avoid leaks.
+- `lookaheadQueue` — prefetches upcoming sentences (`prefetchSerial` = one synthesis at a time, in order, for slow engines) and revokes object URLs.
 
-**Server side** (`server/`): `ttsMiddleware.js` is a Connect-style middleware used by Vite in dev (`vite.config.ts`); `server.cjs` is a separate standalone prod server that duplicates the `/api/tts` Edge-TTS logic (keep the two in sync). `ttsMiddleware.js` also lazily spawns `server/tts_worker.py` (FastAPI on `127.0.0.1:5055`, needs Python with torch/soundfile/fastapi) for Kokoro/VieNeu server-side synthesis.
+All `/api/tts` calls go through `utils/apiBase.ts` so a static deployment can point at a remote server / the Cloudflare Worker (`cloudflare/`, Edge voices only).
 
-**Reader**: `src/utils/epubHelper.ts` + `components/ReaderView.tsx` (epub.js). Other components: BookShelf, PlayerBar, voice pickers (VoiceDrawer/VoiceModal), SleepTimerModal, iOSGuideModal.
+**Static build**: `npm run build:static` -> `dist-static/` (relative base, no onnx folder). It can hold the git repo that is published to GitHub Pages (`kimthi113114/audioepub`); the script keeps `dist-static/.git`. Without a server the app falls back to on-device voices.
+
+**Server side** (`server/`): `ttsMiddleware.js` is a Connect-style middleware used by Vite in dev (`vite.config.ts`); `server.cjs` is a separate standalone prod server that duplicates the Edge-TTS part of `/api/tts` (keep in sync). `ttsMiddleware.js` also lazily spawns `server/tts_worker.py` (FastAPI on `127.0.0.1:5055`, Python with torch/soundfile/fastapi/vieneu/kokoro_vietnamese) for Kokoro/VieNeu.
+
+**Reader**: `src/utils/epubHelper.ts` + `components/ReaderView.tsx` (epub.js). Listening UI: `Player.tsx` (mini-player + full sheet; replaced PlayerBar), voice pickers (VoiceDrawer/VoiceModal), SleepTimerModal, StorageModal (cache manager), AudioLogModal (iOS lock-screen debugging), ReaderSettingsSheet. Theme colours come from `src/theme/palettes.ts` (CSS variables + AntD tokens + epub themes).
 
 ## Project rules (from AGENTS.md; UI/docs are in Vietnamese)
 

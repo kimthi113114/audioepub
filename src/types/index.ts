@@ -32,11 +32,12 @@ export interface Chapter {
 
 export type AppTheme = 'light' | 'dark' | 'sepia';
 
-export type TTSEngineMode = 'edge' | 'kokoro' | 'vieneu' | 'system' | 'neural';
+export type TTSEngineMode = 'edge' | 'kokoro' | 'vieneu' | 'vtts' | 'system' | 'neural';
 export type TTSEngineType =
   | 'edge'
   | 'kokoro'
   | 'vieneu'
+  | 'vtts'
   | 'system'
   | 'webspeech'
   | 'neural'
@@ -49,6 +50,20 @@ export interface KokoroVoiceItem {
   shortName: string;
   gender: 'female' | 'male';
   region: 'Miền Nam' | 'Miền Bắc' | 'Miền Trung' | 'Quốc tế';
+  badge: string;
+  color: string;
+  description: string;
+  isRecommended?: boolean;
+}
+
+/** V-TTS voice (VITS running in the browser) */
+export interface VttsVoiceItem {
+  id: string; // 'vtts:0' .. 'vtts:4'
+  voiceKey: string; // speaker id as string
+  name: string;
+  shortName: string;
+  gender: 'female' | 'male';
+  region: 'Miền Bắc' | 'Miền Nam';
   badge: string;
   color: string;
   description: string;

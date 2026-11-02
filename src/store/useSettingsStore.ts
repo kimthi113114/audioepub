@@ -68,6 +68,8 @@ export const useSettingsStore = create<SettingsStore>()(
       setSelectedVoiceURI: (selectedVoiceURI) => {
         if (selectedVoiceURI.startsWith('kokoro:')) {
           set({ selectedVoiceURI, engineMode: 'kokoro', ttsEngine: 'kokoro' });
+        } else if (selectedVoiceURI.startsWith('vtts:')) {
+          set({ selectedVoiceURI, engineMode: 'vtts', ttsEngine: 'vtts' });
         } else if (selectedVoiceURI.startsWith('vieneu:')) {
           set({ selectedVoiceURI, engineMode: 'vieneu', ttsEngine: 'vieneu' });
         } else if (

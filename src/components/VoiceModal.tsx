@@ -39,6 +39,7 @@ import { KOKORO_VOICES, type KokoroVoiceItem } from '../services/kokoroClientSer
 import { getVieNeuVoices, type VieNeuVoiceItem } from '../services/vieneuService';
 import { TTSServerSetting } from './TTSServerSetting';
 import { VieNeuModeSwitch } from './VieNeuModeSwitch';
+import { VttsPanel } from './VttsPanel';
 
 const { Text } = Typography;
 
@@ -799,6 +800,31 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                   }}
                 />
               </div>
+            ),
+          },
+
+          // TAB: V-TTS (runs in the browser, no server)
+          {
+            key: 'vtts',
+            label: (
+              <span style={{ fontSize: 13, fontWeight: 500 }}>
+                🧠 Trên máy: V-TTS
+              </span>
+            ),
+            children: (
+              <VttsPanel
+                selectedVoiceURI={selectedVoiceURI}
+                onSelect={(voice) => {
+                  setSelectedVoiceURI(voice.id);
+                  message.success(`Đã chọn: ${voice.name}`);
+                  onClose();
+                }}
+                onPreview={(voice) => {
+                  setPreviewingURI(voice.id);
+                  onPreviewVoice(voice.id, `Xin chào! Tôi là ${voice.shortName}, giọng đọc V-TTS chạy ngay trên thiết bị của bạn.`);
+                  setTimeout(() => setPreviewingURI((cur) => (cur === voice.id ? null : cur)), 6000);
+                }}
+              />
             ),
           },
 

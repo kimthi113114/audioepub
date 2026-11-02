@@ -31,6 +31,7 @@ import {
 } from '../services/vieneuService';
 import { LookaheadQueue } from '../services/lookaheadQueue';
 import { logAudio } from '../utils/audioDebugLog';
+import { synthesize as synthesizeVtts, isModelDownloaded as isVttsDownloaded, getVttsVoiceById } from '../services/vttsService';
 
 
 // A valid 1s mono PCM WAV that is silent but not all zeros (some engines skip pure digital silence)
@@ -69,8 +70,8 @@ const setPlaybackAudioSession = () => {
 
 export interface UseTTSReturn {
   playbackState: PlaybackState;
-  engineMode: 'edge' | 'kokoro' | 'vieneu' | 'neural' | 'system';
-  setEngineMode: (mode: 'edge' | 'kokoro' | 'vieneu' | 'neural' | 'system') => void;
+  engineMode: 'edge' | 'kokoro' | 'vieneu' | 'vtts' | 'neural' | 'system';
+  setEngineMode: (mode: 'edge' | 'kokoro' | 'vieneu' | 'vtts' | 'neural' | 'system') => void;
   edgeVoices: EdgeVoice[];
   selectedEdgeVoice: EdgeVoice | null;
   kokoroVoices: KokoroVoiceItem[];
@@ -444,6 +445,7 @@ export function useTTS(
         navigator.mediaSession.playbackState = 'playing';
         const isKokoro = selectedVoiceURI.startsWith('kokoro:') || engineMode === 'kokoro';
         const isVieNeu = selectedVoiceURI.startsWith('vieneu:') || engineMode === 'vieneu';
+        const isVtts = selectedVoiceURI.startsWith('vtts:') || engineMode === 'vtts';
         const isEdge =
           selectedVoiceURI === 'vi-VN-HoaiMyNeural' ||
           selectedVoiceURI === 'vi-VN-NamMinhNeural' ||
@@ -455,6 +457,8 @@ export function useTTS(
         if (isKokoro) {
           const kVoice = getKokoroVoiceById(selectedVoiceURI) || KOKORO_VOICES[0];
           voiceName = `${kVoice.name} (Kokoro Client AI)`;
+        } else if (isVtts) {
+          voiceName = `${getVttsVoiceById(selectedVoiceURI)?.name || 'V-TTS'} (trên máy)`;
         } else if (isVieNeu) {
           const vVoice = getVieNeuVoiceById(selectedVoiceURI) || VIENEU_VOICES[0];
           voiceName = `${vVoice.name} (VieNeu 48kHz)`;
@@ -813,6 +817,103 @@ export function useTTS(
     [advanceToNext, handleEngineFailure, selectedVoiceURI, speechRate, volume, updateMediaSession]
   );
 
+  // A3. V-TTS (VITS in the browser via ONNX Runtime Web): same queue as VieNeu, synthesis is local
+  const playVttsSentence = useCallback(
+    async (idx: number) => {
+      const audio = neuralAudioRef.current;
+      if (!audio) return;
+
+      const list = sentencesRef.current;
+      if (idx >= list.length || idx < 0) {
+        setPlaybackState('idle');
+        isPlayingRef.current = false;
+        return;
+      }
+
+      const textToSpeak = list[idx].trim();
+      if (!textToSpeak) {
+        advanceToNext(idx);
+        return;
+      }
+
+      setPlaybackState('loading');
+      const speakerId = Number(getVttsVoiceById(selectedVoiceURI)?.voiceKey ?? selectedVoiceURI.replace('vtts:', '')) || 0;
+      const queue = lookaheadQueueRef.current;
+
+      // Local synthesis is one request at a time anyway; queue the current sentence and a few more
+      const VTTS_LOOKAHEAD = 3;
+      const kickLookahead = () => {
+        for (let ahead = 0; ahead <= VTTS_LOOKAHEAD; ahead++) {
+          const i = idx + ahead;
+          if (i >= list.length || !list[i].trim()) continue;
+          queue
+            .prefetchSerial(i, list[i].trim(), (txt) => synthesizeVtts(txt, speakerId))
+            .catch((err) => {
+              if (err?.message !== 'cancelled') console.warn('[V-TTS Lookahead] Prefetch error:', err);
+            });
+        }
+      };
+
+      try {
+        kickLookahead();
+        const blobUrl = (await queue.get(idx)?.promise) || '';
+
+        if (!isPlayingRef.current) return;
+
+        if (currentBlobUrlRef.current && currentBlobUrlRef.current !== blobUrl) {
+          URL.revokeObjectURL(currentBlobUrlRef.current);
+          currentBlobUrlRef.current = null;
+        }
+        currentBlobUrlRef.current = blobUrl;
+        queue.markPlaying(idx);
+
+        const currentTimer = sleepTimerRef.current;
+        let effectiveVolume = volume;
+        if (currentTimer.isActive && currentTimer.fadeAudio && currentTimer.remainingSeconds <= 30) {
+          effectiveVolume = volume * Math.max(0, currentTimer.remainingSeconds / 30);
+        }
+
+        audio.src = blobUrl;
+        audio.playbackRate = speechRate;
+        audio.volume = effectiveVolume;
+
+        kickLookahead();
+
+        audio.onended = () => {
+          queue.revoke(idx);
+          if (currentBlobUrlRef.current === blobUrl) {
+            URL.revokeObjectURL(blobUrl);
+            currentBlobUrlRef.current = null;
+          }
+          if (!isPlayingRef.current) return;
+          advanceToNext(idx);
+        };
+
+        audio.onerror = (e) => {
+          console.warn('[V-TTS Audio] Playback error on sentence:', idx, e);
+          queue.revoke(idx);
+          if (isPlayingRef.current) advanceToNext(idx);
+        };
+
+        await audio.play();
+        failCountRef.current = 0;
+        setPlaybackState('playing');
+        isPlayingRef.current = true;
+
+        if (onSentenceChangeRef.current) {
+          onSentenceChangeRef.current(idx, textToSpeak);
+        }
+
+        updateMediaSession(textToSpeak);
+        queue.pruneOlderThan(idx);
+      } catch (error) {
+        console.error('[V-TTS] Error synthesizing sentence:', error);
+        handleEngineFailure(idx, error, 'V-TTS');
+      }
+    },
+    [advanceToNext, handleEngineFailure, selectedVoiceURI, speechRate, volume, updateMediaSession]
+  );
+
   // A2. VieNeu-TTS 48kHz Engine (HTML5 <audio> + Lookahead Queue)
   const playVieNeuSentence = useCallback(
     async (idx: number) => {
@@ -1126,6 +1227,8 @@ export function useTTS(
       selectedVoiceURI.startsWith('kokoro:') ||
       engineMode === 'kokoro';
 
+    const isVtts = selectedVoiceURI.startsWith('vtts:') || engineMode === 'vtts';
+
     const isVieNeu =
       selectedVoiceURI.startsWith('vieneu:') ||
       engineMode === 'vieneu';
@@ -1152,6 +1255,12 @@ export function useTTS(
       }
       stopKeepAlive();
       playKokoroSentence(idx);
+    } else if (isVtts) {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+      stopKeepAlive();
+      playVttsSentence(idx);
     } else if (isVieNeu) {
       if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
         window.speechSynthesis.cancel();
@@ -1182,6 +1291,7 @@ export function useTTS(
     isModelReady,
     playKokoroSentence,
     playVieNeuSentence,
+    playVttsSentence,
     playEdgeSentence,
     playNeuralSentence,
     playSystemSentence,
@@ -1255,6 +1365,7 @@ export function useTTS(
     const isAudioEngine =
       selectedVoiceURI.startsWith('kokoro:') ||
       selectedVoiceURI.startsWith('vieneu:') ||
+      selectedVoiceURI.startsWith('vtts:') ||
       selectedVoiceURI === 'vi-VN-HoaiMyNeural' ||
       selectedVoiceURI === 'vi-VN-NamMinhNeural' ||
       selectedVoiceURI.endsWith('Neural') ||
@@ -1262,6 +1373,7 @@ export function useTTS(
       selectedVoiceURI.startsWith('en-US') ||
       engineMode === 'kokoro' ||
       engineMode === 'vieneu' ||
+      engineMode === 'vtts' ||
       engineMode === 'edge' ||
       ((selectedVoiceURI.startsWith('piper:') || engineMode === 'neural') && isModelReady);
 
@@ -1557,6 +1669,35 @@ export function useTTS(
         } catch (err) {
           console.warn('[Kokoro Preview] Failed, falling back:', err);
           message.error('Không thể phát nghe thử giọng Kokoro');
+          return;
+        }
+      }
+
+      // 1b. Preview V-TTS (runs in the browser)
+      if (voiceURI.startsWith('vtts:')) {
+        try {
+          if (!(await isVttsDownloaded())) {
+            message.warning('Hãy tải mô hình V-TTS (khoảng 175 MB) trước khi nghe thử');
+            return;
+          }
+          const speaker = Number(getVttsVoiceById(voiceURI)?.voiceKey ?? 0);
+          const blob = await synthesizeVtts(sampleText, speaker);
+          if (previewUrlRef.current) {
+            URL.revokeObjectURL(previewUrlRef.current);
+            previewUrlRef.current = null;
+          }
+          const url = URL.createObjectURL(blob);
+          previewUrlRef.current = url;
+          if (pAudio) {
+            pAudio.src = url;
+            pAudio.playbackRate = speechRate;
+            pAudio.volume = volume;
+            await pAudio.play();
+            return;
+          }
+        } catch (err) {
+          console.warn('[V-TTS Preview] Failed:', err);
+          message.error('Không thể phát nghe thử giọng V-TTS');
           return;
         }
       }
