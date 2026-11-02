@@ -2,7 +2,6 @@ import { getPiperVoiceById } from './piperVoices';
 import { getEdgeVoiceById } from '../services/edgeTTSService';
 import { getKokoroVoiceById } from '../services/kokoroClientService';
 import { getVieNeuVoiceById } from '../services/vieneuService';
-import { getVttsVoiceById } from '../services/vttsService';
 
 export function formatVoiceInfo(v: SpeechSynthesisVoice | string): {
   displayName: string;
@@ -32,17 +31,6 @@ export function formatVoiceInfo(v: SpeechSynthesisVoice | string): {
         color: kokoroVoice.color,
         isNatural: true,
         isVN: !kokoroVoice.region.includes('Quốc tế'),
-      };
-    }
-
-    const vttsVoice = getVttsVoiceById(v);
-    if (vttsVoice) {
-      return {
-        displayName: vttsVoice.name,
-        badge: vttsVoice.badge,
-        color: vttsVoice.color,
-        isNatural: true,
-        isVN: true,
       };
     }
 

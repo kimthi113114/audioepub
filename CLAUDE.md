@@ -17,11 +17,10 @@ No test runner is configured; verification is `tsc -b`, `vite build`, `oxlint`, 
 
 AudioEpub is a client-side React 19 + AntD + Zustand app for reading EPUBs and listening via TTS (Vietnamese-focused). Books/bookmarks persist in IndexedDB via Dexie (`src/db`), settings in `src/store/useSettingsStore.ts`.
 
-**Multi-engine TTS** is the core complexity. `src/hooks/useTTS.ts` orchestrates all engines (`engineMode`: `edge | kokoro | vieneu | vtts | neural (Piper) | system (Web Speech)`), with one service per engine in `src/services/`:
+**Multi-engine TTS** is the core complexity. `src/hooks/useTTS.ts` orchestrates all engines (`engineMode`: `edge | kokoro | vieneu | neural (Piper) | system (Web Speech)`), with one service per engine in `src/services/`:
 - `edgeTTSService` — MP3 from `/api/tts` (Microsoft Edge neural voices).
 - `kokoroClientService` — Kokoro-Vietnamese via `/api/tts` (server-side Python worker, despite the name).
 - `vieneuService` — VieNeu-TTS via `/api/tts`; the user picks Nano (24 kHz) or Turbo (48 kHz) in settings (`vieneuMode`); the worker loads one model at a time.
-- `vttsService` — V-TTS (VITS, ONNX Runtime Web) running **in the browser**, ~175 MB downloaded once into Cache Storage; fast only when the page is cross-origin isolated (Vite dev headers / `public/coi-serviceworker.js` on static hosts). License of the model is non-commercial.
 - `piperService` — Piper VITS in-browser via ONNX wasm served from `/onnx/`.
 - `lookaheadQueue` — prefetches upcoming sentences (`prefetchSerial` = one synthesis at a time, in order, for slow engines) and revokes object URLs.
 

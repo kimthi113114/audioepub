@@ -93,11 +93,19 @@ export const App: React.FC = () => {
   }, []);
 
   const { selectedVoiceURI, setSelectedVoiceURI } = useSettingsStore();
+  // V-TTS was removed: drop the stale selection and the ~175 MB model cache it left in the browser
+  useEffect(() => {
+    if (typeof caches !== 'undefined') caches.delete('audioepub-vtts-v1').catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    if (!selectedVoiceURI.startsWith('vtts:') || serverTTS === null) return;
+    const fallback = serverTTS ? 'vi-VN-HoaiMyNeural' : vietnameseVoices[0]?.voiceURI;
+    if (fallback) setSelectedVoiceURI(fallback);
+  }, [selectedVoiceURI, serverTTS, vietnameseVoices, setSelectedVoiceURI]);
   const serverFallbackDone = useRef<boolean>(false);
   useEffect(() => {
     if (serverFallbackDone.current || serverTTS !== false || vietnameseVoices.length === 0) return;
-    // Only voices that need the server are replaced (Edge / Kokoro / VieNeu). On-device ones (system voices,
-    // V-TTS, Piper) keep working without it.
+    // Only voices that need the server are replaced (Edge / Kokoro / VieNeu). On-device ones keep working.
     const needsServer =
       selectedVoiceURI.startsWith('kokoro:') ||
       selectedVoiceURI.startsWith('vieneu:') ||
@@ -105,7 +113,7 @@ export const App: React.FC = () => {
     serverFallbackDone.current = true; // decide once per load; never fight a later manual choice
     if (!needsServer) return;
     setSelectedVoiceURI(vietnameseVoices[0].voiceURI);
-    message.info('Bản web tĩnh không có giọng AI từ server. Đã chuyển sang giọng Tiếng Việt của thiết bị. Bạn có thể chọn V-TTS để dùng giọng AI chạy trên máy.');
+    message.info('Bản web tĩnh không có giọng AI từ server. Đã chuyển sang giọng Tiếng Việt của thiết bị.');
   }, [serverTTS, vietnameseVoices, voices, selectedVoiceURI, setSelectedVoiceURI]);
 
   // Load books from IndexedDB
