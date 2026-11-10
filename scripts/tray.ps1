@@ -1,4 +1,4 @@
-﻿# AudioEpub System Tray Runner
+# AudioEpub System Tray Runner
 # Manages the Vite development server in the background and provides tray controls.
 
 param(
@@ -11,9 +11,9 @@ $ErrorActionPreference = "SilentlyContinue"
 $createdNew = $false
 $mutex = New-Object System.Threading.Mutex($true, "AudioEpubTrayMutex", [ref]$createdNew)
 if (-not $createdNew) {
-    # If already running, notify and open the app
+    # If already running, open the app and exit this launcher
     Start-Process "https://novel.tail356389.ts.net"
-    exit
+    exit 0
 }
 
 Add-Type -AssemblyName System.Windows.Forms
@@ -36,18 +36,21 @@ try {
 
 # 2. Check if Vite/Node server is already running on port 5173
 $serverProcess = $null
-$existingConn = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
-
-if ($existingConn) {
-    try {
+try {
+    $existingConn = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($existingConn) {
         $serverProcess = Get-Process -Id $existingConn.OwningProcess -ErrorAction SilentlyContinue
-    } catch {}
-}
+    }
+} catch {}
 
 if (-not $serverProcess) {
     # Start Vite in background (no console window)
     $viteBin = Join-Path $projectDir "node_modules\vite\bin\vite.js"
     $nodeExe = "node.exe"
+    $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
+    if ($nodeCmd -and $nodeCmd.Source) {
+        $nodeExe = $nodeCmd.Source
+    }
     
     $pinfo = New-Object System.Diagnostics.ProcessStartInfo
     $pinfo.FileName = $nodeExe
@@ -60,7 +63,7 @@ if (-not $serverProcess) {
     try {
         $serverProcess = [System.Diagnostics.Process]::Start($pinfo)
     } catch {
-        [System.Windows.Forms.MessageBox]::Show("Không thể khởi động Vite server: " + $_.Exception.Message, "AudioEpub Lỗi", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+        [System.Windows.Forms.MessageBox]::Show("Khong the khoi dong Vite server: " + $_.Exception.Message, "AudioEpub Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
         exit 1
     }
 }
@@ -88,8 +91,8 @@ $notifyIcon.Text = "AudioEpub (Port $port)"
 # 4. Create Context Menu (Right Click on Tray Icon)
 $contextMenu = New-Object System.Windows.Forms.ContextMenuStrip
 
-# Menu Item: Title / Status
-$titleItem = $contextMenu.Items.Add("📖 AudioEpub · Đang chạy")
+# Menu Item: Status
+$titleItem = $contextMenu.Items.Add("[AudioEpub] Dang chay")
 $titleItem.Enabled = $false
 $titleFont = New-Object System.Drawing.Font($titleItem.Font, [System.Drawing.FontStyle]::Bold)
 $titleItem.Font = $titleFont
@@ -97,29 +100,29 @@ $titleItem.Font = $titleFont
 $contextMenu.Items.Add("-") | Out-Null
 
 # Menu Item: Open via Tailscale
-$openTailscaleItem = $contextMenu.Items.Add("🚀 Mở AudioEpub (Tailscale HTTPS)")
+$openTailscaleItem = $contextMenu.Items.Add("Mo AudioEpub (Tailscale HTTPS)")
 $openTailscaleItem.add_Click({
     Start-Process $tailscaleDomain
 })
 $openTailscaleItem.Font = New-Object System.Drawing.Font($openTailscaleItem.Font, [System.Drawing.FontStyle]::Bold)
 
 # Menu Item: Open via Localhost
-$openLocalhostItem = $contextMenu.Items.Add("💻 Mở AudioEpub (Localhost:5173)")
+$openLocalhostItem = $contextMenu.Items.Add("Mo AudioEpub (Localhost:5173)")
 $openLocalhostItem.add_Click({
     Start-Process $localhostUrl
 })
 
 # Menu Item: Copy Link
-$copyLinkItem = $contextMenu.Items.Add("📋 Sao chép link Tailscale")
+$copyLinkItem = $contextMenu.Items.Add("Sao chep link Tailscale")
 $copyLinkItem.add_Click({
     [System.Windows.Forms.Clipboard]::SetText($tailscaleDomain)
-    $notifyIcon.ShowBalloonTip(2000, "AudioEpub", "Đã sao chép: $tailscaleDomain", [System.Windows.Forms.ToolTipIcon]::Info)
+    $notifyIcon.ShowBalloonTip(2000, "AudioEpub", "Da sao chep link Tailscale", [System.Windows.Forms.ToolTipIcon]::Info)
 })
 
 $contextMenu.Items.Add("-") | Out-Null
 
 # Menu Item: Exit / Stop App
-$exitItem = $contextMenu.Items.Add("❌ Tắt app (Thoát hoàn toàn)")
+$exitItem = $contextMenu.Items.Add("Tat app (Thoat hoan toan)")
 $exitItem.add_Click({
     # Stop Vite/Node server
     try {
@@ -155,8 +158,8 @@ $notifyIcon.add_DoubleClick({
 # Show startup notification balloon tip
 $notifyIcon.ShowBalloonTip(
     4000,
-    "AudioEpub đang chạy!",
-    "Ứng dụng đã sẵn sàng tại $primaryUrl`nNhấp đúp chuột để Mở, chuột phải để Tắt app.",
+    "AudioEpub dang chay!",
+    "Ung dung da san sang tai $primaryUrl`nNhap dup chuot de Mo, chuot phai de Tat app.",
     [System.Windows.Forms.ToolTipIcon]::Info
 )
 
