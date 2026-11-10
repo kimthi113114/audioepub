@@ -71,6 +71,7 @@ export async function parseEpubFile(file: File | Blob): Promise<ParsedEpubMetada
 /**
  * Tách nội dung thành các câu để đọc TTS mượt mà và đồng bộ highlight.
  * Hỗ trợ tiếng Việt và các quy tắc ngắt câu chuẩn.
+ * Tự động loại bỏ các đoạn chỉ chứa ký tự đặc biệt, dấu ba chấm "...", "---", "***".
  */
 export function splitTextIntoSentences(text: string): string[] {
   if (!text) return [];
@@ -89,9 +90,36 @@ export function splitTextIntoSentences(text: string): string[] {
   const regex = /[^.!?…\n]+[.!?…\n]+|[^.!?…\n]+$/g;
   const matches = clean.match(regex);
 
-  if (!matches) return [clean];
+  // Câu đọc hợp lệ bắt buộc phải chứa ít nhất 1 chữ cái hoặc chữ số.
+  // Loại bỏ hoàn toàn các dòng ngắt cảnh như: "...", "…", "---", "* * *", "~~~"
+  const hasSpokenContent = (s: string) => /[\p{L}\p{N}]/u.test(s);
+
+  if (!matches) {
+    return hasSpokenContent(clean) ? [clean] : [];
+  }
 
   return matches
     .map((s) => s.trim())
-    .filter((s) => s.length > 0 && !/^[\d\W]+$/.test(s)); // bỏ qua chuỗi chỉ có số hoặc ký tự đặc biệt
+    .filter((s) => s.length > 0 && hasSpokenContent(s));
+}
+
+/**
+ * Chuẩn hóa câu trước khi gửi vào bộ đọc TTS (đặc biệt là VieNeu / Edge-TTS / Kokoro):
+ * - Chuyển dấu ba chấm "..." hoặc "…" ở cuối câu thành dấu chấm "." để ngắt hơi tự nhiên
+ * - Chuyển dấu ba chấm "..." hoặc "…" ở giữa câu thành dấu phẩy ", " để nghỉ nhịp tự nhiên
+ * - Tránh việc AI đọc thành tiếng "chấm chấm chấm" hoặc tạo tiếng khựng glitch
+ */
+export function normalizeSentenceForTTS(text: string): string {
+  if (!text) return '';
+  let s = text.trim();
+  // 1. Dấu ba chấm hoặc … ở cuối câu -> dấu chấm
+  s = s.replace(/[.…]{2,}$/u, '.');
+  s = s.replace(/…$/u, '.');
+  // 2. Dấu ba chấm hoặc … ở giữa câu -> dấu phẩy với khoảng nghỉ
+  s = s.replace(/\s*[.…]{2,}\s*/gu, ', ');
+  s = s.replace(/\s*…\s*/gu, ', ');
+  // 3. Dọn dẹp dấu trùng lặp
+  s = s.replace(/,\s*,+/g, ',');
+  s = s.replace(/\.\s*\.+/g, '.');
+  return s.trim();
 }

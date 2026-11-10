@@ -25,15 +25,16 @@ const Row: React.FC<{ label: string; children: React.ReactNode }> = ({ label, ch
 export const ReaderSettingsSheet: React.FC<Props> = ({ open, onClose }) => {
   const {
     theme, setTheme, readingMode, setReadingMode, fontSize, setFontSize,
-    lineHeight, setLineHeight, fontFamily, setFontFamily,
+    lineHeight, setLineHeight, fontFamily, setFontFamily, textAlign, setTextAlign,
   } = useSettingsStore();
 
   return (
     <Drawer
-      placement="bottom"
+      placement={typeof window !== 'undefined' && window.innerWidth >= 992 ? 'right' : 'bottom'}
       open={open}
       onClose={onClose}
-      size="62dvh"
+      size={typeof window !== 'undefined' && window.innerWidth >= 992 ? 'default' : '68dvh'}
+      width={380}
       title="Hiển thị"
       styles={{ body: { padding: '16px 20px', paddingBottom: 'calc(var(--sab, 0px) + 16px)' } }}
     >
@@ -71,6 +72,18 @@ export const ReaderSettingsSheet: React.FC<Props> = ({ open, onClose }) => {
       </Row>
       <Row label={`Giãn dòng: ${lineHeight.toFixed(1)}`}>
         <Slider min={1.4} max={2.4} step={0.1} value={lineHeight} onChange={setLineHeight} />
+      </Row>
+      <Row label="Canh lề">
+        <Segmented
+          block
+          size="large"
+          value={textAlign || 'justify'}
+          onChange={(v) => setTextAlign(v as 'left' | 'justify')}
+          options={[
+            { label: 'Canh đều (Sách in)', value: 'justify' },
+            { label: 'Căn trái', value: 'left' },
+          ]}
+        />
       </Row>
       <Row label="Phông chữ">
         <Segmented

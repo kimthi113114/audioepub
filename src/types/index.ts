@@ -71,11 +71,15 @@ export interface VieNeuVoiceItem {
   isRecommended?: boolean;
 }
 
+export type SentenceGapMs = 0 | 100 | 200 | 300;
+
 export interface ReaderSettings {
+  sentenceGapMs: SentenceGapMs;
   theme: AppTheme;
   fontSize: number; // in px: 14 to 32
   lineHeight: number; // 1.4 to 2.2
   fontFamily: string;
+  textAlign: 'left' | 'justify';
   speechRate: number; // 0.5 to 2.5
   speechPitch: number; // 0.5 to 1.5
   volume: number; // 0 to 1

@@ -75,7 +75,7 @@ export class LookaheadQueue {
     const gen = this.generation;
     const promise = generator(trimmed)
       .then((blob) => {
-        if (gen !== this.generation) throw new Error('cancelled'); // queue was cleared meanwhile
+        if (gen !== this.generation || this.queue.get(index) !== item) throw new Error('cancelled');
         const url = URL.createObjectURL(blob);
         item.blobUrl = url;
         item.status = 'ready';
@@ -85,13 +85,49 @@ export class LookaheadQueue {
       .catch((err) => {
         item.status = 'idle';
         item.promise = null;
-        this.queue.delete(index);
+        if (this.queue.get(index) === item) this.queue.delete(index);
         throw err;
       });
 
     item.promise = promise;
     this.queue.set(index, item);
     return promise;
+  }
+
+  /**
+   * Inject a pre-fetched promise/blobUrl directly into the queue (e.g. for cross-chapter transition).
+   */
+  public injectItem(
+    index: number,
+    text: string,
+    promise: Promise<string>,
+    blobUrl: string | null = null
+  ): void {
+    const item: QueuedAudioItem = {
+      index,
+      text: text.trim(),
+      blobUrl,
+      promise,
+      status: blobUrl ? 'ready' : 'generating',
+    };
+    if (blobUrl) {
+      this.activeBlobUrls.add(blobUrl);
+    }
+    const gen = this.generation;
+    promise
+      .then((url) => {
+        if (gen !== this.generation || this.queue.get(index) !== item) {
+          URL.revokeObjectURL(url);
+          throw new Error('cancelled');
+        }
+        item.blobUrl = url;
+        item.status = 'ready';
+        this.activeBlobUrls.add(url);
+      })
+      .catch(() => {
+        if (this.queue.get(index) === item) this.queue.delete(index);
+      });
+    this.queue.set(index, item);
   }
 
   /**
@@ -161,5 +197,6 @@ export class LookaheadQueue {
     this.activeBlobUrls.clear();
     this.queue.clear();
     this.generation++;
+    this.serial = Promise.resolve();
   }
 }

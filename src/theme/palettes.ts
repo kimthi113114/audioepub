@@ -37,7 +37,7 @@ export const PALETTES: Record<ThemeName, Palette> = {
     primary: '#4a5fd8',
     primarySoft: 'rgba(74, 95, 216, 0.10)',
     highlight: 'rgba(255, 205, 86, 0.55)',
-    bar: 'rgba(255, 255, 255, 0.97)',
+    bar: 'rgba(255, 255, 255, 0.85)',
     shadow: '0 6px 24px rgba(40, 36, 28, 0.10)',
   },
   // Old book paper, brown ink, terracotta accent
@@ -52,7 +52,7 @@ export const PALETTES: Record<ThemeName, Palette> = {
     primary: '#b4561f',
     primarySoft: 'rgba(180, 86, 31, 0.12)',
     highlight: 'rgba(205, 124, 42, 0.32)',
-    bar: 'rgba(250, 243, 227, 0.97)',
+    bar: 'rgba(250, 243, 227, 0.88)',
     shadow: '0 6px 24px rgba(90, 62, 24, 0.14)',
   },
   // Deep blue-black, easy on the eyes at night
@@ -68,7 +68,7 @@ export const PALETTES: Record<ThemeName, Palette> = {
     primarySoft: 'rgba(138, 168, 255, 0.14)',
     highlight: 'rgba(138, 168, 255, 0.34)',
     highlightText: '#ffffff',
-    bar: 'rgba(23, 26, 33, 0.97)',
+    bar: 'rgba(23, 26, 33, 0.85)',
     shadow: '0 6px 24px rgba(0, 0, 0, 0.5)',
   },
 };

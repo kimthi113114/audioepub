@@ -11,6 +11,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 export default defineConfig({
   // Relative asset URLs: the same build works at a domain root and under a sub-path (GitHub Pages)
   base: './',
+  server: {
+    host: '0.0.0.0',
+    port: 5173,
+    allowedHosts: true,
+  },
   plugins: [
     react(),
     {

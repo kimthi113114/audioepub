@@ -6,17 +6,81 @@ import path from 'path';
 const MAX_CACHE_ENTRIES = 800;
 const audioCache = new Map();
 
-// Map of pre-initialized Edge-TTS instances per voice to keep WSS connections alive
+// Map of pre-initialized Edge-TTS instances per voice: { tts, lastUsed }
 const ttsInstances = new Map();
+const IDLE_TIMEOUT_MS = 90000; // 90s idle evict
 
-async function getTTSInstance(voiceName) {
-  if (ttsInstances.has(voiceName)) {
-    return ttsInstances.get(voiceName);
+function closeTTSInstance(voiceName) {
+  const item = ttsInstances.get(voiceName);
+  if (item) {
+    ttsInstances.delete(voiceName);
+    try {
+      item.tts.close();
+    } catch {}
   }
-  const tts = new MsEdgeTTS();
+}
+
+async function getTTSInstance(voiceName, forceNew = false) {
+  if (!forceNew && ttsInstances.has(voiceName)) {
+    const item = ttsInstances.get(voiceName);
+    item.lastUsed = Date.now();
+    return item.tts;
+  }
+  if (forceNew) {
+    closeTTSInstance(voiceName);
+  }
+  const tts = new MsEdgeTTS({
+    connectionTimeoutMs: 15000,
+    synthesisTimeoutMs: 30000,
+  });
   await tts.setMetadata(voiceName, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
-  ttsInstances.set(voiceName, tts);
+  ttsInstances.set(voiceName, { tts, lastUsed: Date.now() });
   return tts;
+}
+
+// Periodic cleanup must not keep a build process alive when Vite imports this module.
+setInterval(() => {
+  const now = Date.now();
+  for (const [voiceName, item] of ttsInstances.entries()) {
+    if (now - item.lastUsed > IDLE_TIMEOUT_MS) {
+      closeTTSInstance(voiceName);
+    }
+  }
+}, 30000).unref();
+
+async function synthesizeEdgeAudio(targetVoice, cleanText, rateStr, pitchStr) {
+  const doSynth = async (forceNew) => {
+    const tts = await getTTSInstance(targetVoice, forceNew);
+    return new Promise((resolve, reject) => {
+      let isDone = false;
+      const { audioStream } = tts.toStream(cleanText, {
+        rate: rateStr,
+        pitch: pitchStr,
+      });
+
+      const chunks = [];
+      audioStream.on('data', (c) => chunks.push(c));
+      audioStream.on('end', () => {
+        if (isDone) return;
+        isDone = true;
+        resolve(Buffer.concat(chunks));
+      });
+      audioStream.on('error', (err) => {
+        if (isDone) return;
+        isDone = true;
+        closeTTSInstance(targetVoice);
+        reject(err);
+      });
+    });
+  };
+
+  try {
+    return await doSynth(false);
+  } catch (err) {
+    console.warn(`[Edge-TTS] Stream error (${err?.message}). Retrying once with fresh connection...`);
+    await new Promise((r) => setTimeout(r, 500));
+    return await doSynth(true);
+  }
 }
 
 // Local Python Worker Manager
@@ -155,11 +219,27 @@ export function createTTSMiddleware() {
         return res.end('Method Not Allowed');
       }
 
-      const cleanText = text.trim();
+      let cleanText = text.trim();
       if (!cleanText) {
         res.statusCode = 400;
         return res.end('Missing text parameter');
       }
+
+      // Skip synthesis if text has no letters or digits (e.g. only "...", "---", "***")
+      if (!/[\p{L}\p{N}]/u.test(cleanText)) {
+        res.statusCode = 204;
+        return res.end();
+      }
+
+      // Normalize ellipsis to prevent neural TTS from vocalizing "chấm chấm chấm" or stuttering
+      cleanText = cleanText
+        .replace(/[.…]{2,}$/u, '.')
+        .replace(/…$/u, '.')
+        .replace(/\s*[.…]{2,}\s*/gu, ', ')
+        .replace(/\s*…\s*/gu, ', ')
+        .replace(/,\s*,+/g, ',')
+        .replace(/\.\s*\.+/g, '.')
+        .trim();
 
       // Check Cache
       const cacheKey = `${engine}:${mode}:${voice}:${rate.toFixed(2)}:${pitch.toFixed(2)}:${cleanText}`;
@@ -245,38 +325,20 @@ export function createTTSMiddleware() {
       const pitchHz = Math.round((pitch - 1.0) * 50);
       const pitchStr = pitchHz >= 0 ? `+${pitchHz}Hz` : `${pitchHz}Hz`;
 
-      const tts = await getTTSInstance(targetEdgeVoice);
-      const { audioStream } = tts.toStream(cleanText, {
-        rate: rateStr,
-        pitch: pitchStr,
-      });
+      const audioBuffer = await synthesizeEdgeAudio(targetEdgeVoice, cleanText, rateStr, pitchStr);
 
-      const chunks = [];
-      audioStream.on('data', (c) => chunks.push(c));
-      audioStream.on('end', () => {
-        const audioBuffer = Buffer.concat(chunks);
+      // Put in cache
+      if (audioCache.size >= MAX_CACHE_ENTRIES) {
+        const firstKey = audioCache.keys().next().value;
+        audioCache.delete(firstKey);
+      }
+      audioCache.set(cacheKey, { buffer: audioBuffer, mimeType: 'audio/mpeg' });
 
-        // Put in cache
-        if (audioCache.size >= MAX_CACHE_ENTRIES) {
-          const firstKey = audioCache.keys().next().value;
-          audioCache.delete(firstKey);
-        }
-        audioCache.set(cacheKey, { buffer: audioBuffer, mimeType: 'audio/mpeg' });
-
-        res.setHeader('Content-Type', 'audio/mpeg');
-        res.setHeader('Content-Length', audioBuffer.length);
-        res.setHeader('X-Cache', 'MISS');
-        res.setHeader('Cache-Control', 'public, max-age=86400');
-        res.end(audioBuffer);
-      });
-
-      audioStream.on('error', (err) => {
-        console.error('Edge-TTS stream error:', err);
-        if (!res.headersSent) {
-          res.statusCode = 500;
-          res.end(`TTS generation failed: ${err.message}`);
-        }
-      });
+      res.setHeader('Content-Type', 'audio/mpeg');
+      res.setHeader('Content-Length', audioBuffer.length);
+      res.setHeader('X-Cache', 'MISS');
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      res.end(audioBuffer);
     } catch (err) {
       console.error('TTS Middleware internal error:', err);
       if (!res.headersSent) {

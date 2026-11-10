@@ -107,10 +107,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   return (
     <header
       style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '0 12px',
+        padding: '0 20px',
         paddingTop: 'var(--sat, 0px)',
         height: 'calc(56px + var(--sat, 0px))',
         borderBottom: '1px solid var(--border)',
@@ -120,79 +117,91 @@ export const Navbar: React.FC<NavbarProps> = ({
         zIndex: 100,
       }}
     >
-      {/* Left: Brand or Back Button */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
-        {currentBookTitle ? (
-          <Button
-            type="text"
-            icon={<ArrowLeftOutlined />}
-            onClick={onBackToShelf}
-            style={{ padding: '4px 8px', flexShrink: 0 }}
-          >
-            Thư viện
-          </Button>
-        ) : (
-          <Space align="center" size={6} style={{ flexShrink: 0 }}>
-            <img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="" width={28} height={28} style={{ borderRadius: 8, display: 'block' }} />
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          width: '100%',
+          maxWidth: 1320,
+          margin: '0 auto',
+          height: '100%',
+        }}
+      >
+        {/* Left: Brand or Back Button */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
+          {currentBookTitle ? (
+            <Button
+              type="text"
+              icon={<ArrowLeftOutlined />}
+              onClick={onBackToShelf}
+              style={{ padding: '4px 8px', flexShrink: 0 }}
+            >
+              Thư viện
+            </Button>
+          ) : (
+            <Space align="center" size={6} style={{ flexShrink: 0 }}>
+              <img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="" width={28} height={28} style={{ borderRadius: 8, display: 'block' }} />
+              <Text
+                strong
+                style={{
+                  fontSize: 17,
+                  letterSpacing: -0.5,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                AudioEpub
+              </Text>
+            </Space>
+          )}
+
+          {currentBookTitle && (
             <Text
+              ellipsis
               strong
               style={{
-                fontSize: 17,
-                letterSpacing: -0.5,
-                whiteSpace: 'nowrap',
+                flex: 1,
+                minWidth: 0,
+                fontSize: 14,
               }}
             >
-              AudioEpub
+              {currentBookTitle}
             </Text>
-          </Space>
-        )}
+          )}
+        </div>
 
-        {currentBookTitle && (
-          <Text
-            ellipsis
-            strong
-            style={{
-              flex: 1,
-              minWidth: 0,
-              fontSize: 14,
-            }}
-          >
-            {currentBookTitle}
-          </Text>
-        )}
+        {/* Right: Actions */}
+        <Space size={6} style={{ flexShrink: 0 }}>
+          {onOpenUpload && (
+            <Button
+              type="primary"
+              icon={<UploadOutlined />}
+              onClick={onOpenUpload}
+              size="middle"
+            >
+              <span className="hide-on-mobile">Thêm sách</span>
+            </Button>
+          )}
+
+          {sleepTimer.isActive && (
+            <Button
+              type="primary"
+              size="small"
+              icon={<ClockCircleOutlined />}
+              onClick={onOpenTimerModal}
+              style={{ borderRadius: 14, fontSize: 12 }}
+            >
+              {formatTimerLabel()}
+            </Button>
+          )}
+
+          <Dropdown menu={{ items: menuItems }} placement="bottomRight" trigger={['click']}>
+            <Badge dot={sleepTimer.isActive} color="#52c41a" offset={[-6, 6]}>
+              <Button type="text" icon={<MenuOutlined />} aria-label="Menu" style={{ width: 40, height: 40, fontSize: 18 }} />
+            </Badge>
+          </Dropdown>
+        </Space>
       </div>
-
-      {/* Right: Actions */}
-      <Space size={6} style={{ flexShrink: 0 }}>
-        {onOpenUpload && (
-          <Button
-            type="primary"
-            icon={<UploadOutlined />}
-            onClick={onOpenUpload}
-            size="middle"
-          >
-            <span className="hide-on-mobile">Thêm sách</span>
-          </Button>
-        )}
-
-        {sleepTimer.isActive && (
-          <Button
-            type="primary"
-            size="small"
-            icon={<ClockCircleOutlined />}
-            onClick={onOpenTimerModal}
-            style={{ borderRadius: 14, fontSize: 12 }}
-          >
-            {formatTimerLabel()}
-          </Button>
-        )}
-
-        <Dropdown menu={{ items: menuItems }} placement="bottomRight" trigger={['click']}>
-          <Badge dot={sleepTimer.isActive} color="#52c41a" offset={[-6, 6]}>
-            <Button type="text" icon={<MenuOutlined />} aria-label="Menu" style={{ width: 40, height: 40, fontSize: 18 }} />
-          </Badge>
-        </Dropdown>
-      </Space>
     </header>
   );
 };

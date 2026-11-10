@@ -14,7 +14,9 @@ interface SettingsStore extends ReaderSettings {
   setFontSize: (fontSize: number) => void;
   setLineHeight: (lineHeight: number) => void;
   setFontFamily: (fontFamily: string) => void;
+  setTextAlign: (textAlign: 'left' | 'justify') => void;
   setSpeechRate: (speechRate: number) => void;
+  setSentenceGapMs: (gap: ReaderSettings['sentenceGapMs']) => void;
   setSpeechPitch: (speechPitch: number) => void;
   setVolume: (volume: number) => void;
   setSelectedVoiceURI: (voiceURI: string) => void;
@@ -40,7 +42,9 @@ const defaultSettings: ReaderSettings & {
   fontSize: 18,
   lineHeight: 1.8,
   fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  textAlign: 'justify',
   speechRate: 1.0,
+  sentenceGapMs: 0,
   speechPitch: 1.0,
   volume: 1.0,
   selectedVoiceURI: 'vi-VN-HoaiMyNeural',
@@ -62,7 +66,9 @@ export const useSettingsStore = create<SettingsStore>()(
       setFontSize: (fontSize) => set({ fontSize }),
       setLineHeight: (lineHeight) => set({ lineHeight }),
       setFontFamily: (fontFamily) => set({ fontFamily }),
+      setTextAlign: (textAlign) => set({ textAlign }),
       setSpeechRate: (speechRate) => set({ speechRate }),
+      setSentenceGapMs: (gap) => set({ sentenceGapMs: [0, 100, 200, 300].includes(gap) ? gap : 0 }),
       setSpeechPitch: (speechPitch) => set({ speechPitch }),
       setVolume: (volume) => set({ volume }),
       setSelectedVoiceURI: (selectedVoiceURI) => {

@@ -18,11 +18,12 @@ import { PALETTES, getPalette } from '../theme/palettes';
 const { Text } = Typography;
 
 export interface ChapterControls {
-  nextChapter: () => void;
+  nextChapter: () => boolean;
   getFirstVisibleSentence?: () => number;
   prevChapter: () => void;
   currentChapterIndex: number;
   totalChapters: number;
+  getNextChapterSentences?: (count?: number) => Promise<string[]>;
 }
 
 interface ReaderViewProps {
@@ -30,6 +31,8 @@ interface ReaderViewProps {
   currentSentenceIndex: number;
   onSentencesReady: (sentences: string[], keepIndex?: number) => void;
   onChapterChanged?: (title: string, index: number, total: number) => void;
+  onChapterNavigation?: () => void;
+  onChapterNavigationFailed?: () => void;
   /** Tap on text: sentence index, or null when tapping blank area */
   onSentenceTap?: (index: number | null) => void;
   onSentenceLongPress?: (index: number) => void;
@@ -46,6 +49,8 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
   currentSentenceIndex,
   onSentencesReady,
   onChapterChanged,
+  onChapterNavigation,
+  onChapterNavigationFailed,
   onSentenceTap,
   onSentenceLongPress,
   onSentenceDoubleTap,
@@ -54,7 +59,7 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
   playerActive,
   registerChapterControls,
 }) => {
-  const { theme, fontSize, lineHeight, fontFamily, readingMode, autoScroll, highlightSentence } =
+  const { theme, fontSize, lineHeight, fontFamily, textAlign, readingMode, autoScroll, highlightSentence } =
     useSettingsStore();
 
   const viewerRef = useRef<HTMLDivElement>(null);
@@ -94,6 +99,18 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
     lastTapRef.current = { t: Date.now(), timer };
   }, []);
   const readingModeRef = useRef(readingMode);
+  // Events inside an iframe do not bubble to this wrapper. Handle its exposed
+  // margins separately, without placing an overlay in the native scroll path.
+  const surfaceTouchRef = useRef<{ x: number; y: number; at: number; moved: boolean } | null>(null);
+  const surfaceTouchEndedAtRef = useRef(0);
+  const tapScrollSurface = (target: EventTarget | null) => {
+    if (readingModeRef.current !== 'continuous') return;
+    const element = target as HTMLElement | null;
+    if (element?.closest('a, button, input, select, textarea, [role="button"]')) return;
+    const frameDoc = viewerRef.current?.querySelector('iframe')?.contentDocument;
+    if (window.getSelection()?.toString() || frameDoc?.getSelection()?.toString()) return;
+    dispatchTap(null);
+  };
   const sentenceIdxRef = useRef(currentSentenceIndex);
   const keepSentenceRef = useRef<number | null>(null);
   // Sentence that was on screen right before a re-layout; the page holding it is restored afterwards
@@ -178,31 +195,107 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
     return () => window.clearTimeout(t);
   }, [isTocOpen, scrollTocToCurrent]);
 
-  // Navigate to next chapter (OOM Safe: single chapter lazy loaded)
-  const handleNextChapter = useCallback(() => {
-    if (currentChapterIndex < chapters.length - 1) {
-      const nextIdx = currentChapterIndex + 1;
-      const target = chapters[nextIdx];
-      if (target && renditionRef.current) {
-        currentSentenceElementsRef.current = [];
-        viewerRef.current?.scrollTo({ top: 0, behavior: 'instant' });
-        renditionRef.current.display(target.href);
-      }
-    }
-  }, [currentChapterIndex, chapters]);
+  // Headless extraction of all sentences in a chapter (zero DOM mount, works 100% when tab is hidden in background)
+  const extractChapterSentencesHeadless = useCallback(async (chapterHref: string): Promise<string[]> => {
+    try {
+      if (!epubBookRef.current || !chapterHref) return [];
+      const section = (epubBookRef.current as any).spine?.get(chapterHref);
+      if (!section) return [];
 
-  // Navigate to previous chapter (OOM Safe: single chapter lazy loaded)
-  const handlePrevChapter = useCallback(() => {
-    if (currentChapterIndex > 0) {
-      const prevIdx = currentChapterIndex - 1;
-      const target = chapters[prevIdx];
-      if (target && renditionRef.current) {
-        currentSentenceElementsRef.current = [];
-        viewerRef.current?.scrollTo({ top: 0, behavior: 'instant' });
-        renditionRef.current.display(target.href);
+      const doc = await section.load((epubBookRef.current as any).load.bind(epubBookRef.current));
+      if (!doc) return [];
+
+      const blocks = doc.querySelectorAll ? doc.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, blockquote') : [];
+      const sentences: string[] = [];
+      // Match DOM extraction block by block; headings without punctuation must not
+      // merge into the next paragraph when Safari returns from the background.
+      blocks.forEach((block: any) => {
+        if (!block.querySelector?.('p, h1, h2, h3, h4, h5, h6, li, blockquote')) {
+          sentences.push(...splitTextIntoSentences(block.textContent || ''));
+        }
+      });
+      if (!sentences.length) {
+        sentences.push(...splitTextIntoSentences(doc.body?.textContent || (doc as any).textContent || ''));
       }
+
+      try {
+        section.unload();
+      } catch {}
+
+      return sentences;
+    } catch (err) {
+      console.warn('[ReaderView] Could not extract chapter sentences headless:', err);
+      return [];
     }
-  }, [currentChapterIndex, chapters]);
+  }, []);
+
+  // Pending DOM chapter to render when tab returns to visible (Background Transition Safe)
+  const pendingDomHrefRef = useRef<string | null>(null);
+
+  const navigationVersionRef = useRef(0);
+  const navigationTargetRef = useRef<string | null>(null);
+  const selectedChapterRef = useRef(0);
+
+  // Every explicit chapter selection owns a fresh sentence/scroll position.
+  const navigateToChapter = useCallback((index: number) => {
+    const target = chapters[index];
+    if (!target || !renditionRef.current) return false;
+    onChapterNavigation?.();
+    const version = ++navigationVersionRef.current;
+    navigationTargetRef.current = target.href.split('#')[0];
+    selectedChapterRef.current = index;
+    setCurrentChapterIndex(index);
+    currentSentenceElementsRef.current = [];
+    keepSentenceRef.current = 0;
+    pageAnchorRef.current = null;
+    resumeScrollRef.current = null;
+    sentenceIdxRef.current = 0;
+    // Cancel the old chapter's debounced resume write before saving the new position.
+    window.clearTimeout(saveTimerRef.current);
+    pendingResumeRef.current = null;
+    currentHrefRef.current = null;
+    if (book.id) {
+      db.books.update(book.id, {
+        resumeHref: target.href, resumeSentence: 0, lastReadAt: new Date(),
+      }).catch(() => {});
+    }
+    const label = target.label || `Chương ${index + 1}`;
+    setCurrentChapterTitle(label);
+    onChapterChanged?.(label, index, chapters.length);
+    if (document.hidden) {
+      pendingDomHrefRef.current = target.href;
+      extractChapterSentencesHeadless(target.href).then((sents) => {
+        if (version !== navigationVersionRef.current || pendingDomHrefRef.current !== target.href) return;
+        if (!sents.length) {
+          keepSentenceRef.current = null;
+          currentHrefRef.current = target.href;
+          onSentencesReady([], 0);
+          return;
+        }
+        keepSentenceRef.current = null;
+        currentHrefRef.current = target.href;
+        onSentencesReady(sents, 0);
+      });
+    } else {
+      pendingDomHrefRef.current = null;
+      viewerRef.current?.scrollTo({ top: 0, behavior: 'instant' });
+      renditionRef.current.display(target.href).catch(() => {
+        if (version === navigationVersionRef.current) {
+          onChapterNavigationFailed?.();
+          message.error('Không thể mở chương. Vui lòng chọn lại chương.');
+        }
+      });
+    }
+    return true;
+  }, [chapters, book.id, onChapterNavigation, onChapterNavigationFailed, onChapterChanged, extractChapterSentencesHeadless, onSentencesReady]);
+
+  const handleNextChapter = useCallback(() => {
+    return navigateToChapter(selectedChapterRef.current + 1);
+  }, [navigateToChapter]);
+
+  const handlePrevChapter = useCallback(() => {
+    navigateToChapter(selectedChapterRef.current - 1);
+  }, [navigateToChapter]);
 
   // Paginated mode: a transparent layer in the parent document owns taps / swipes / long-press.
   // (Touch events inside the epub iframe are unreliable on iOS Safari.)
@@ -331,6 +424,16 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
     return 0;
   }, []);
 
+  // Headless extraction of the first N sentences of the next chapter for Lookahead zero-latency (Strict OOM Rule)
+  const getNextChapterSentences = useCallback(async (count = 2): Promise<string[]> => {
+    if (currentChapterIndex >= chapters.length - 1) return [];
+    const nextIdx = currentChapterIndex + 1;
+    const target = chapters[nextIdx];
+    if (!target || !target.href) return [];
+    const sents = await extractChapterSentencesHeadless(target.href);
+    return sents.slice(0, count);
+  }, [currentChapterIndex, chapters, extractChapterSentencesHeadless]);
+
   // Register chapter controls with parent (App.tsx)
   useEffect(() => {
     if (registerChapterControls) {
@@ -340,9 +443,10 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
         getFirstVisibleSentence,
         currentChapterIndex,
         totalChapters: chapters.length,
+        getNextChapterSentences,
       });
     }
-  }, [registerChapterControls, handleNextChapter, handlePrevChapter, getFirstVisibleSentence, currentChapterIndex, chapters.length]);
+  }, [registerChapterControls, handleNextChapter, handlePrevChapter, getFirstVisibleSentence, currentChapterIndex, chapters.length, getNextChapterSentences]);
 
   // Tag individual sentences inside DOM for 1:1 TTS highlight & Click-to-speak
   const tagAndExtractSentences = useCallback((doc: Document): string[] => {
@@ -458,7 +562,12 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
                 'font-family': fontFamily,
                 'font-size': `${fontSize}px`,
                 'line-height': `${lineHeight}`,
-                padding: '20px 24px 56px',
+                'text-align': textAlign || 'justify',
+                hyphens: 'auto',
+                '-webkit-hyphens': 'auto',
+                padding: '24px 24px 64px',
+                'max-width': '780px',
+                margin: '0 auto',
                 cursor: 'pointer',
                 'touch-action': 'manipulation',
                 '-webkit-font-smoothing': 'antialiased',
@@ -490,7 +599,11 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
 
         // Handle section/chapter rendered (Extract sentences of ONLY current chapter)
         rendition.on('rendered', (section: any, view: any) => {
-          if (!view || !view.document) return;
+          if (!isMounted || !view || !view.document) return;
+          const targetHref = navigationTargetRef.current;
+          if (targetHref && section?.href?.split('#')[0] !== targetHref) return;
+          const resetToStart = !!targetHref && currentHrefRef.current !== section?.href;
+          navigationTargetRef.current = null;
 
           // Teardown previous chapter sentence elements to release memory
           currentSentenceElementsRef.current = [];
@@ -528,6 +641,7 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
             }, { passive: true });
             doc.addEventListener('touchmove', clearPress, { passive: true });
             doc.addEventListener('touchend', clearPress, { passive: true });
+            doc.addEventListener('touchcancel', clearPress, { passive: true });
 
             // iOS Safari zooms on double tap: swallow the second tap's default action
             let lastTouchEnd = 0;
@@ -577,20 +691,29 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
             };
 
             // iOS Safari only fires click on "clickable" elements, so also detect taps from touch events
-            let touchTap: { x: number; y: number; t: number } | null = null;
+            let touchTap: { x: number; y: number; t: number; moved: boolean } | null = null;
             let lastTouchTapAt = 0;
             doc.addEventListener('touchstart', (e: TouchEvent) => {
               const t = e.touches[0];
-              touchTap = e.touches.length === 1 && t ? { x: t.clientX, y: t.clientY, t: Date.now() } : null;
+              touchTap = e.touches.length === 1 && t ? { x: t.clientX, y: t.clientY, t: Date.now(), moved: false } : null;
+            }, { passive: true });
+            doc.addEventListener('touchmove', (e: TouchEvent) => {
+              const t = e.touches[0];
+              if (touchTap && (!t || e.touches.length !== 1 ||
+                Math.abs(t.clientX - touchTap.x) > 10 || Math.abs(t.clientY - touchTap.y) > 10)) touchTap.moved = true;
+            }, { passive: true });
+            doc.addEventListener('touchcancel', () => {
+              touchTap = null;
+              lastTouchTapAt = Date.now();
             }, { passive: true });
             doc.addEventListener('touchend', (e: TouchEvent) => {
               const start = touchTap;
               touchTap = null;
+              lastTouchTapAt = Date.now(); // suppress synthetic clicks even after a rejected gesture
               const t = e.changedTouches[0];
-              if (!start || !t || longPressed) return;
+              if (!start || !t || start.moved || longPressed || e.touches.length) return;
               if (Math.abs(t.clientX - start.x) > 10 || Math.abs(t.clientY - start.y) > 10) return;
               if (Date.now() - start.t > 500) return;
-              lastTouchTapAt = Date.now();
               handleTap(t.clientX, e.target);
             }, { passive: true });
 
@@ -618,11 +741,22 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
           }
           const keepIndex = keepSentenceRef.current ?? (sameChapter ? sentenceIdxRef.current : undefined);
           keepSentenceRef.current = null;
-          onSentencesReady(extractedSentences, keepIndex);
+          // Rendering the current chapter again only refreshes DOM references.
+          // Replacing the live TTS list here can invalidate its current audio or
+          // a pending sentence gap using an older React sentence index.
+          if (!sameChapter) onSentencesReady(extractedSentences, keepIndex);
           setRenderTick((t) => t + 1);
           const anchor = pageAnchorRef.current;
           pageAnchorRef.current = null;
-          if (anchor !== null && sameChapter) {
+          if (resetToStart) {
+            // Apply after epub.js finishes its own layout/scroll, including nested scrollers.
+            const version = navigationVersionRef.current;
+            window.setTimeout(() => {
+              if (isMounted && version === navigationVersionRef.current) {
+                scrollToCurrentRef.current(true, 0, false);
+              }
+            }, 60);
+          } else if (anchor !== null && sameChapter) {
             window.setTimeout(() => scrollToCurrentRef.current(true, anchor, false), 60);
           }
 
@@ -631,6 +765,7 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
             (c) => section?.href && (section.href.includes(c.href) || c.href.includes(section.href))
           );
           const effectiveIdx = foundIdx !== -1 ? foundIdx : (section?.index ?? 0);
+          selectedChapterRef.current = effectiveIdx;
           setCurrentChapterIndex(effectiveIdx);
 
           const label =
@@ -688,6 +823,7 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
 
     return () => {
       isMounted = false;
+      navigationVersionRef.current++;
       currentSentenceElementsRef.current = [];
       if (rendition) {
         try {
@@ -817,10 +953,19 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
     };
   }, [saveResume, flushResume, getFirstVisibleSentence]);
 
-  // Resync highlight/scroll once the page becomes visible again
+  // Resync highlight/scroll and render pending background chapter once tab becomes visible again
   useEffect(() => {
     const onVisible = () => {
-      if (!document.hidden) setRenderTick((t) => t + 1);
+      if (!document.hidden) {
+        if (pendingDomHrefRef.current && renditionRef.current) {
+          const hrefToRender = pendingDomHrefRef.current;
+          pendingDomHrefRef.current = null;
+          viewerRef.current?.scrollTo({ top: 0, behavior: 'instant' });
+          renditionRef.current.display(hrefToRender);
+        } else {
+          setRenderTick((t) => t + 1);
+        }
+      }
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
@@ -897,18 +1042,14 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
       rendition.themes.fontSize(`${fontSize}px`);
       rendition.themes.override('line-height', `${lineHeight}`);
       rendition.themes.override('font-family', fontFamily);
+      rendition.themes.override('text-align', textAlign || 'justify');
     } catch (_e) {}
-  }, [theme, fontSize, lineHeight, fontFamily]);
+  }, [theme, fontSize, lineHeight, fontFamily, textAlign]);
 
   // Navigation to a specific chapter from TOC
-  const handleSelectChapter = (href: string, index: number) => {
-    if (renditionRef.current) {
-      currentSentenceElementsRef.current = [];
-      viewerRef.current?.scrollTo({ top: 0, behavior: 'instant' });
-      renditionRef.current.display(href);
-      setCurrentChapterIndex(index);
-      setIsTocOpen(false);
-    }
+  const handleSelectChapter = (_href: string, index: number) => {
+    navigateToChapter(index);
+    setIsTocOpen(false);
   };
 
   return (
@@ -925,6 +1066,7 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
     >
       {/* Top chapter bar (overlay, shown with the chrome) */}
       <div
+        className="reader-chapter-bar"
         style={{
           position: 'absolute',
           top: 'calc(56px + var(--sat, 0px))',
@@ -934,43 +1076,134 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          padding: '6px 12px',
+          padding: '8px 16px',
           background: barBg,
+          backdropFilter: 'blur(20px)',
+          WebkitBackdropFilter: 'blur(20px)',
           borderBottom: '1px solid var(--border)',
-          gap: 8,
+          gap: 12,
           transform: chromeVisible ? 'translateY(0)' : 'translateY(-200%)',
           opacity: chromeVisible ? 1 : 0,
           pointerEvents: chromeVisible ? 'auto' : 'none',
-          transition: 'transform 0.2s ease, opacity 0.2s ease',
+          transition: 'transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.25s ease',
+          boxShadow: '0 4px 16px rgba(0, 0, 0, 0.04)',
         }}
       >
-        <Button
-          type="text"
-          size="middle"
-          icon={<UnorderedListOutlined />}
-          onClick={() => setIsTocOpen(true)}
+        <div
+          style={{
+            maxWidth: 860,
+            width: '100%',
+            margin: '0 auto',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+          }}
         >
-          Mục lục
-        </Button>
-        <Text strong style={{ fontSize: 13, flex: 1, textAlign: 'center' }} ellipsis>
-          {currentChapterTitle}
-        </Text>
-        <Text type="secondary" style={{ fontSize: 12 }}>
-          {currentChapterIndex + 1}/{chapters.length || 1}
-        </Text>
+          <Button
+            type="text"
+            size="middle"
+            icon={<UnorderedListOutlined style={{ fontSize: 16 }} />}
+            onClick={() => setIsTocOpen(true)}
+            style={{ fontWeight: 500 }}
+          >
+            Mục lục
+          </Button>
+          <Text strong style={{ fontSize: 13, flex: 1, textAlign: 'center' }} ellipsis>
+            {currentChapterTitle}
+          </Text>
+          <span
+            style={{
+              fontSize: 12,
+              color: 'var(--primary)',
+              background: 'var(--primary-soft)',
+              padding: '2px 8px',
+              borderRadius: 12,
+              fontWeight: 600,
+              flexShrink: 0,
+            }}
+          >
+            {currentChapterIndex + 1}/{chapters.length || 1}
+          </span>
+        </div>
       </div>
 
-      {/* Main EPUB container */}
+      {/* Main EPUB container (Centered reading canvas on widescreen) */}
       <div
-        ref={viewerRef}
-        className={`epub-viewer-wrapper${readingMode === 'paginated' ? ' paged' : ''}`}
         style={{
           flex: 1,
           width: '100%',
           height: '100%',
+          display: 'flex',
+          justifyContent: 'center',
           position: 'relative',
+          overflow: 'hidden',
+          background: pal.page,
         }}
-      />
+      >
+        <div
+          ref={viewerRef}
+          className={`epub-viewer-wrapper${readingMode === 'paginated' ? ' paged' : ''}`}
+          onTouchStart={(e) => {
+            const t = e.touches[0];
+            surfaceTouchRef.current = e.touches.length === 1 && t
+              ? { x: t.clientX, y: t.clientY, at: Date.now(), moved: false } : null;
+          }}
+          onTouchMove={(e) => {
+            const start = surfaceTouchRef.current;
+            const t = e.touches[0];
+            if (start && (!t || e.touches.length !== 1 ||
+              Math.abs(t.clientX - start.x) > 10 || Math.abs(t.clientY - start.y) > 10)) start.moved = true;
+          }}
+          onTouchCancel={() => {
+            surfaceTouchRef.current = null;
+            surfaceTouchEndedAtRef.current = Date.now();
+          }}
+          onTouchEnd={(e) => {
+            const start = surfaceTouchRef.current;
+            surfaceTouchRef.current = null;
+            surfaceTouchEndedAtRef.current = Date.now();
+            if (!start || start.moved || e.touches.length || Date.now() - start.at > 500) return;
+            tapScrollSurface(e.target);
+          }}
+          onClick={(e) => {
+            if (Date.now() - surfaceTouchEndedAtRef.current < 700) return;
+            tapScrollSurface(e.target);
+          }}
+          style={{
+            flex: 1,
+            width: '100%',
+            maxWidth: 860,
+            height: '100%',
+            position: 'relative',
+          }}
+        />
+
+        {readingMode === 'paginated' && (
+          <div
+            aria-hidden="true"
+            onTouchStart={onGestureStart}
+            onTouchMove={onGestureMove}
+            onTouchEnd={onGestureEnd}
+            onClick={(e) => {
+              if (Date.now() - lastGestureAtRef.current < 700) return;
+              applyTap(e.clientX, e.clientY);
+            }}
+            style={{
+              position: 'absolute',
+              top: 0,
+              bottom: 0,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              width: '100%',
+              maxWidth: 860,
+              zIndex: 20,
+              cursor: 'pointer',
+              touchAction: 'none',
+            }}
+          />
+        )}
+      </div>
 
       {playerActive && !autoFollow && (
         <Button
@@ -985,27 +1218,14 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
           style={{
             position: 'absolute',
             right: 16,
-            bottom: 'calc(var(--sab, 0px) + 16px)',
-            zIndex: 45,
-            boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+            bottom: 'calc(var(--sab, 0px) + 76px)',
+            zIndex: 65,
+            boxShadow: '0 6px 18px rgba(0,0,0,0.22)',
+            backdropFilter: 'blur(10px)',
           }}
         >
           Về câu đang đọc
         </Button>
-      )}
-
-      {readingMode === 'paginated' && (
-        <div
-          aria-hidden="true"
-          onTouchStart={onGestureStart}
-          onTouchMove={onGestureMove}
-          onTouchEnd={onGestureEnd}
-          onClick={(e) => {
-            if (Date.now() - lastGestureAtRef.current < 700) return;
-            applyTap(e.clientX, e.clientY);
-          }}
-          style={{ position: 'absolute', inset: 0, zIndex: 20, cursor: 'pointer', touchAction: 'none' }}
-        />
       )}
 
       {/* Reading progress hairline (always visible) */}
@@ -1023,54 +1243,74 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
         }}
       />
 
-      {/* Bottom bar (overlay, shown with the chrome while not listening) */}
+      {/* Floating Island Bottom bar (shown with chrome while not listening) */}
       <div
         style={{
           position: 'absolute',
-          bottom: 0,
-          left: 0,
-          right: 0,
+          bottom: 'calc(var(--sab, 0px) + 20px)',
+          left: '50%',
+          transform:
+            chromeVisible && !playerActive
+              ? 'translateX(-50%) translateY(0)'
+              : 'translateX(-50%) translateY(100px)',
+          opacity: chromeVisible && !playerActive ? 1 : 0,
+          pointerEvents: chromeVisible && !playerActive ? 'auto' : 'none',
+          transition: 'transform 0.3s cubic-bezier(0.2, 0.9, 0.3, 1), opacity 0.25s ease',
           zIndex: 40,
-          padding: '10px 16px',
-          paddingBottom: 'calc(var(--sab, 0px) + 10px)',
+          width: 'calc(100% - 32px)',
+          maxWidth: 420,
+          padding: '6px 10px',
+          borderRadius: 36,
           background: barBg,
-          borderTop: '1px solid var(--border)',
+          backdropFilter: 'blur(24px)',
+          WebkitBackdropFilter: 'blur(24px)',
+          border: '1px solid var(--border)',
+          boxShadow: '0 12px 32px rgba(0, 0, 0, 0.16), 0 2px 6px rgba(0, 0, 0, 0.08)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          gap: 12,
-          transform: chromeVisible && !playerActive ? 'translateY(0)' : 'translateY(200%)',
-          opacity: chromeVisible && !playerActive ? 1 : 0,
-          pointerEvents: chromeVisible && !playerActive ? 'auto' : 'none',
-          transition: 'transform 0.2s ease, opacity 0.2s ease',
+          gap: 10,
         }}
       >
         <Button
+          type="text"
+          shape="circle"
           size="large"
           icon={<LeftOutlined />}
           disabled={currentChapterIndex <= 0}
           onClick={handlePrevChapter}
           aria-label="Chương trước"
+          style={{ width: 44, height: 44 }}
         />
         <Button
           type="primary"
           size="large"
-          icon={<CustomerServiceOutlined />}
+          icon={<CustomerServiceOutlined style={{ fontSize: 18 }} />}
           onClick={() => onStartListen?.(getFirstVisibleSentence())}
-          style={{ flex: 1, height: 48, borderRadius: 24 }}
+          style={{
+            flex: 1,
+            height: 44,
+            borderRadius: 22,
+            fontWeight: 600,
+            fontSize: 15,
+            boxShadow: '0 4px 14px var(--primary-soft)',
+          }}
         >
-          Nghe
+          Nghe chương này
         </Button>
         <Button
+          type="text"
+          shape="circle"
           size="large"
           icon={<RightOutlined />}
           disabled={currentChapterIndex >= chapters.length - 1}
           onClick={handleNextChapter}
           aria-label="Chương sau"
+          style={{ width: 44, height: 44 }}
         />
       </div>
 
-      {/* Table of Contents bottom sheet with fast search & virtualized list */}
+      {/* Table of Contents drawer with fast search & virtualized list */}
       <Drawer
         title={
           <Space>
@@ -1078,13 +1318,14 @@ const ReaderViewImpl: React.FC<ReaderViewProps> = ({
             <span>Mục lục ({chapters.length} chương)</span>
           </Space>
         }
-        placement="bottom"
+        placement={typeof window !== 'undefined' && window.innerWidth >= 992 ? 'right' : 'bottom'}
         onClose={() => {
           setIsTocOpen(false);
           setTocSearch('');
         }}
         open={isTocOpen}
-        size="90dvh"
+        size={typeof window !== 'undefined' && window.innerWidth >= 992 ? 'default' : '90dvh'}
+        width={420}
         destroyOnHidden
         styles={{
           body: { padding: '12px 16px', paddingBottom: 'calc(var(--sab, 0px) + 12px)', display: 'flex', flexDirection: 'column' },

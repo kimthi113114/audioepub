@@ -29,8 +29,10 @@ import {
   fetchVieNeuTTSBlob,
   type VieNeuVoiceItem,
 } from '../services/vieneuService';
+import { TTSConnectionError } from '../services/ttsRequest';
 import { LookaheadQueue } from '../services/lookaheadQueue';
 import { logAudio } from '../utils/audioDebugLog';
+import { normalizeSentenceForTTS } from '../utils/epubHelper';
 
 
 // A valid 1s mono PCM WAV that is silent but not all zeros (some engines skip pure digital silence)
@@ -57,6 +59,16 @@ const makeSilentWavUrl = (): string => {
   v.setUint32(40, samples * 2, true);
   for (let i = 0; i < samples; i += 50) v.setInt16(44 + i * 2, 1, true);
   return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+};
+
+// pause events are asynchronous: playback intent may already be true again when an
+// intentional source swap's pause event arrives. Account for each actual pause.
+const internalPauses = new WeakMap<HTMLAudioElement, number>();
+const pauseAudioInternally = (audio: HTMLAudioElement) => {
+  if (!audio.paused) {
+    internalPauses.set(audio, (internalPauses.get(audio) || 0) + 1);
+    audio.pause();
+  }
 };
 
 // iOS 16.4+: declare this page as media playback so audio survives the silent switch and screen lock
@@ -95,6 +107,8 @@ export interface UseTTSReturn {
   currentSentence: string;
   sleepTimer: SleepTimerState;
   play: (textList?: string[], startIndex?: number) => void;
+  prepareChapterTransition: () => void;
+  continueChapter: (textList: string[], startIndex?: number) => void;
   pause: () => void;
   resume: () => void;
   stop: () => void;
@@ -109,8 +123,10 @@ export interface UseTTSReturn {
 }
 
 export interface UseTTSOptions {
+  onPlaybackCancelled?: () => void;
   onSentenceChange?: (index: number, sentence: string) => void;
-  onChapterComplete?: () => void;
+  onChapterComplete?: () => boolean | void;
+  onPrefetchNextChapter?: () => Promise<string[] | undefined>;
   bookTitle?: string;
   chapterTitle?: string;
   bookCoverUrl?: string;
@@ -127,6 +143,10 @@ export function useTTS(
     typeof optionsOrSentenceChange === 'object'
       ? optionsOrSentenceChange?.onChapterComplete
       : undefined;
+  const onPrefetchNextChapter =
+    typeof optionsOrSentenceChange === 'object'
+      ? optionsOrSentenceChange?.onPrefetchNextChapter
+      : undefined;
   const bookTitle =
     typeof optionsOrSentenceChange === 'object'
       ? optionsOrSentenceChange?.bookTitle
@@ -140,10 +160,20 @@ export function useTTS(
       ? optionsOrSentenceChange?.bookCoverUrl
       : undefined;
 
+  const onPlaybackCancelled = typeof optionsOrSentenceChange === 'object'
+    ? optionsOrSentenceChange.onPlaybackCancelled : undefined;
+  const onPlaybackCancelledRef = useRef(onPlaybackCancelled);
+  useEffect(() => { onPlaybackCancelledRef.current = onPlaybackCancelled; }, [onPlaybackCancelled]);
+
   const onChapterCompleteRef = useRef(onChapterComplete);
   useEffect(() => {
     onChapterCompleteRef.current = onChapterComplete;
   }, [onChapterComplete]);
+
+  const onPrefetchNextChapterRef = useRef(onPrefetchNextChapter);
+  useEffect(() => {
+    onPrefetchNextChapterRef.current = onPrefetchNextChapter;
+  }, [onPrefetchNextChapter]);
 
   const onSentenceChangeRef = useRef(onSentenceChange);
   useEffect(() => {
@@ -218,6 +248,29 @@ export function useTTS(
   const lookaheadQueueRef = useRef<LookaheadQueue>(new LookaheadQueue());
   const currentBlobUrlRef = useRef<string | null>(null);
 
+  // Cross-Chapter Lookahead Buffer (Prefetches first 2 sentences of next chapter for 0ms transition)
+  interface CrossChapterItem {
+    sentence: string;
+    blobUrl: string | null;
+    promise: Promise<string>;
+  }
+  const crossChapterPrefetchRef = useRef<{
+    sentences: string[];
+    items: Map<number, CrossChapterItem>;
+  } | null>(null);
+  const isPrefetchingCrossChapterRef = useRef<boolean>(false);
+  const crossChapterGenerationRef = useRef(0);
+  const clearCrossChapterPrefetch = useCallback(() => {
+    crossChapterGenerationRef.current++;
+    const prefetched = crossChapterPrefetchRef.current;
+    crossChapterPrefetchRef.current = null;
+    isPrefetchingCrossChapterRef.current = false;
+    prefetched?.items.forEach((item) => {
+      if (item.blobUrl) URL.revokeObjectURL(item.blobUrl);
+      else item.promise.then((url) => { if (url) URL.revokeObjectURL(url); }).catch(() => {});
+    });
+  }, []);
+
 
   const isPlayingRef = useRef<boolean>(false);
   const currentSentenceIndexRef = useRef<number>(0);
@@ -225,6 +278,44 @@ export function useTTS(
   const activeUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const sleepTimerRef = useRef<SleepTimerState>(sleepTimer);
   const playCurrentSentenceRef = useRef<() => void>(() => {});
+  const playbackGenerationRef = useRef(0);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sentenceGapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingGapNextIndexRef = useRef<number | null>(null);
+  const retryPendingRef = useRef(false);
+  const retryCountRef = useRef(0);
+  const resumePositionRef = useRef<number | null>(null);
+  const chapterTransitionRef = useRef(false);
+  const userGesturePrimeRef = useRef(false);
+  const invalidatePlayback = useCallback(() => {
+    playbackGenerationRef.current += 1;
+    if (sentenceGapTimerRef.current !== null) clearTimeout(sentenceGapTimerRef.current);
+    sentenceGapTimerRef.current = null;
+    pendingGapNextIndexRef.current = null;
+    if (retryTimerRef.current !== null) clearTimeout(retryTimerRef.current);
+    retryTimerRef.current = null;
+    retryPendingRef.current = false;
+  }, []);
+
+  useEffect(() => {
+    const recover = (event: Event) => {
+      if (!isPlayingRef.current || !retryPendingRef.current ||
+          (event.type === 'visibilitychange' && document.hidden)) return;
+      if (retryTimerRef.current !== null) clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+      retryPendingRef.current = false;
+      playCurrentSentenceRef.current();
+    };
+    window.addEventListener('online', recover);
+    document.addEventListener('visibilitychange', recover);
+    return () => {
+      window.removeEventListener('online', recover);
+      document.removeEventListener('visibilitychange', recover);
+      isPlayingRef.current = false;
+      invalidatePlayback();
+    };
+  }, [invalidatePlayback]);
+
 
   // Detect iOS Safari
   const isIOS =
@@ -361,7 +452,12 @@ export function useTTS(
     neuralAudioRef.current = neuralAudio;
 
     const markPaused = () => {
+      onPlaybackCancelledRef.current?.();
+      invalidatePlayback();
+      chapterTransitionRef.current = false;
+      userGesturePrimeRef.current = false;
       isPlayingRef.current = false;
+      silentAudio.pause();
       setPlaybackState('paused');
       try {
         if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
@@ -371,7 +467,17 @@ export function useTTS(
     // OS-level interruption (call, Siri, screen lock, headphones unplugged)
     const onSystemPause = () => {
       logAudio('audio.pause', `hidden=${document.hidden} ended=${neuralAudio.ended}`);
-      if (!isPlayingRef.current || neuralAudio.ended || !neuralAudio.src) return;
+      const internal = internalPauses.get(neuralAudio) || 0;
+      if (internal > 0) {
+        internalPauses.set(neuralAudio, internal - 1);
+        return;
+      }
+      if (!neuralAudio.paused || !isPlayingRef.current || chapterTransitionRef.current ||
+          neuralAudio.ended || !neuralAudio.src) return;
+      const generation = playbackGenerationRef.current;
+      const source = neuralAudio.src;
+      const ownsResume = () => isPlayingRef.current && generation === playbackGenerationRef.current &&
+        source === neuralAudio.src && !chapterTransitionRef.current;
       if (document.hidden) {
         // Safari may pause on lock: try once to keep going, otherwise reflect it in the UI
         neuralAudio
@@ -379,7 +485,7 @@ export function useTTS(
           .then(() => logAudio('audio.resumed-in-background'))
           .catch((e) => {
             logAudio('audio.resume-failed', e?.name);
-            markPaused();
+            if (ownsResume()) markPaused();
           });
         return;
       }
@@ -400,8 +506,14 @@ export function useTTS(
 
     const onVisibility = () => {
       logAudio('vis', document.visibilityState);
-      if (!document.hidden && isPlayingRef.current && neuralAudio.paused && neuralAudio.src && !neuralAudio.ended) {
-        neuralAudio.play().catch(() => markPaused());
+      if (!document.hidden && isPlayingRef.current && !chapterTransitionRef.current &&
+          neuralAudio.paused && neuralAudio.src && !neuralAudio.ended) {
+        const generation = playbackGenerationRef.current;
+        const source = neuralAudio.src;
+        neuralAudio.play().catch(() => {
+          if (isPlayingRef.current && generation === playbackGenerationRef.current &&
+              source === neuralAudio.src && !chapterTransitionRef.current) markPaused();
+        });
       }
     };
     const onPageHide = () => logAudio('pagehide');
@@ -429,12 +541,13 @@ export function useTTS(
       silentAudioRef.current = null;
       neuralAudioRef.current = null;
       queue.clear();
+      clearCrossChapterPrefetch();
       if (currentBlobUrlRef.current) {
         URL.revokeObjectURL(currentBlobUrlRef.current);
         currentBlobUrlRef.current = null;
       }
     };
-  }, []);
+  }, [clearCrossChapterPrefetch, invalidatePlayback]);
 
   // Update MediaSession metadata
   const updateMediaSession = useCallback(
@@ -534,21 +647,65 @@ export function useTTS(
 
   // Advance to next sentence helper (handles chapter complete & sleep timer)
   const advanceToNext = useCallback(
-    (currentIdx: number) => {
+    (currentIdx: number, naturalCompletion = false) => {
       const list = sentencesRef.current;
       if (currentIdx >= list.length - 1) {
         // Last sentence in chapter
         const timerState = sleepTimerRef.current;
         if (timerState.isActive && timerState.targetMode === 'chapter') {
+          onPlaybackCancelledRef.current?.();
           setPlaybackState('idle');
           isPlayingRef.current = false;
           setSleepTimer((prev) => ({ ...prev, isActive: false, remainingSeconds: 0 }));
           return;
         }
 
-        // Auto trigger next chapter transition
+        // A false result means there is no next chapter (end of book).
+        const completeChapter = () => {
+          if (onChapterCompleteRef.current?.() !== false) return;
+          onPlaybackCancelledRef.current?.();
+          isPlayingRef.current = false;
+          chapterTransitionRef.current = false;
+          setPlaybackState('idle');
+          if (silentAudioRef.current) silentAudioRef.current.pause();
+          const audio = neuralAudioRef.current;
+          if (audio) {
+            audio.onended = null;
+            audio.onerror = null;
+            audio.loop = false;
+            pauseAudioInternally(audio);
+            audio.removeAttribute('src');
+            audio.load();
+          }
+          lookaheadQueueRef.current.clear();
+          clearCrossChapterPrefetch();
+          if (currentBlobUrlRef.current) URL.revokeObjectURL(currentBlobUrlRef.current);
+          currentBlobUrlRef.current = null;
+          stopKeepAlive();
+          try { navigator.mediaSession.playbackState = 'none'; } catch {}
+        };
+        // Auto trigger next chapter transition with natural audio pause (Decision 1: Option A, 450ms)
         if (onChapterCompleteRef.current) {
-          onChapterCompleteRef.current();
+          // Ensure silent audio continues running to preserve background MediaSession
+          if (silentAudioRef.current && silentAudioRef.current.paused) {
+            silentAudioRef.current.play().catch(() => {});
+          }
+
+          // If tab is currently hidden/in background, trigger chapter change synchronously (0ms)
+          // to bypass aggressive browser background timer throttling and keep audio stream alive
+          const isHidden = typeof document !== 'undefined' && document.hidden;
+          if (isHidden) {
+            completeChapter();
+            return;
+          }
+
+          setPlaybackState('loading');
+          const generation = playbackGenerationRef.current;
+          window.setTimeout(() => {
+            if (isPlayingRef.current && generation === playbackGenerationRef.current && onChapterCompleteRef.current) {
+              completeChapter();
+            }
+          }, 450);
           return;
         }
 
@@ -557,57 +714,122 @@ export function useTTS(
         return;
       }
 
-      // Next sentence
-      const nextIdx = currentIdx + 1;
-      currentSentenceIndexRef.current = nextIdx;
-      setCurrentSentenceIndex(nextIdx);
-      playCurrentSentenceRef.current();
+      // Only a naturally completed spoken sentence receives the configured pause.
+      // Keep the completed sentence highlighted until the next one actually dispatches.
+      const generation = playbackGenerationRef.current;
+      const dispatchNext = () => {
+        if (!isPlayingRef.current || generation !== playbackGenerationRef.current ||
+            currentSentenceIndexRef.current !== currentIdx) return;
+        sentenceGapTimerRef.current = null;
+        pendingGapNextIndexRef.current = null;
+        const nextIdx = currentIdx + 1;
+        currentSentenceIndexRef.current = nextIdx;
+        setCurrentSentenceIndex(nextIdx);
+        playCurrentSentenceRef.current();
+      };
+      const configuredGap = useSettingsStore.getState().sentenceGapMs;
+      const gap = naturalCompletion && [100, 200, 300].includes(configuredGap) ? configuredGap : 0;
+      if (sentenceGapTimerRef.current !== null) clearTimeout(sentenceGapTimerRef.current);
+      if (gap > 0) {
+        pendingGapNextIndexRef.current = currentIdx + 1;
+        sentenceGapTimerRef.current = setTimeout(dispatchNext, gap);
+      } else dispatchNext();
     },
-    []
+    [stopKeepAlive, clearCrossChapterPrefetch]
   );
 
-  // Engine failure policy: Safari autoplay block -> pause with a prompt; repeated synth failures -> fall back to on-device voice
-  const failCountRef = useRef<number>(0);
+  // Transport loss retains playback intent and retries the SAME sentence. navigator.onLine
+  // often stays true during a Tailscale route change, so the timer is always the fallback.
   const handleEngineFailure = useCallback(
     (idx: number, error: unknown, label: string) => {
-      if (!isPlayingRef.current) return;
-      // play() interrupted by a newer load/pause (user jumped or paused): a newer playback already owns the audio
-      if ((error as { name?: string })?.name === 'AbortError') return;
-      if ((error as { message?: string })?.message === 'cancelled') {
-        // The queue was cleared while this sentence was being synthesised. If the user did not move on
-        // (same chapter re-rendered, mode change...), start it again; otherwise a newer play owns the audio.
-        if (isPlayingRef.current && currentSentenceIndexRef.current === idx) playCurrentSentenceRef.current();
-        return;
-      }
-      if ((error as { name?: string })?.name === 'NotAllowedError') {
-        isPlayingRef.current = false;
-        setPlaybackState('paused');
-        message.warning('Safari đã chặn tự phát. Chạm nút ▶ để tiếp tục nghe.');
-        return;
-      }
-      failCountRef.current += 1;
-      if (failCountRef.current >= 2) {
-        failCountRef.current = 0;
-        const fallback = vietnameseVoices[0]; // never fall back to a non-Vietnamese voice
-        if (fallback && engineMode !== 'system') {
-          message.warning(`Giọng ${label} đang lỗi, chuyển sang giọng trên máy.`);
-          setSelectedVoiceURI(fallback.voiceURI);
-        } else {
-          isPlayingRef.current = false;
-          setPlaybackState('paused');
-          message.error(`Giọng ${label} đang lỗi. Hãy thử chọn giọng khác.`);
+      if (!isPlayingRef.current || idx !== currentSentenceIndexRef.current) return;
+      if ((error as { message?: string })?.message === 'cancelled') return;
+      if (error instanceof TTSConnectionError) {
+        if (retryPendingRef.current) return;
+        setPlaybackState('loading');
+        retryPendingRef.current = true;
+        if (retryCountRef.current === 0) {
+          message.info('Kết nối âm thanh bị gián đoạn. Đang tự kết nối lại…');
         }
+        const delay = Math.min(15000, 1000 * 2 ** Math.min(retryCountRef.current++, 4));
+        const generation = playbackGenerationRef.current;
+        retryTimerRef.current = setTimeout(() => {
+          retryTimerRef.current = null;
+          retryPendingRef.current = false;
+          if (isPlayingRef.current && generation === playbackGenerationRef.current &&
+              currentSentenceIndexRef.current === idx) playCurrentSentenceRef.current();
+        }, delay);
         return;
       }
-      advanceToNext(idx);
-    },
-    [advanceToNext, vietnameseVoices, voices, engineMode, setSelectedVoiceURI]
+      onPlaybackCancelledRef.current?.();
+      invalidatePlayback();
+      chapterTransitionRef.current = false;
+      userGesturePrimeRef.current = false;
+      isPlayingRef.current = false;
+      if (neuralAudioRef.current) {
+        neuralAudioRef.current.loop = false;
+        pauseAudioInternally(neuralAudioRef.current);
+      }
+      if (silentAudioRef.current) silentAudioRef.current.pause();
+      stopKeepAlive();
+      setPlaybackState('paused');
+      try { navigator.mediaSession.playbackState = 'paused'; } catch {}
+      message.warning(['NotAllowedError', 'AbortError'].includes((error as { name?: string })?.name || '')
+        ? 'Chạm nút ▶ để tiếp tục nghe trên điện thoại.'
+        : `Giọng ${label} đang lỗi. Chạm ▶ để thử lại hoặc chọn giọng khác.`);
+    }, [invalidatePlayback, stopKeepAlive]
   );
+
+  // Trigger prefetching of the next chapter's first 2 sentences (Decision 2: Option B)
+  const triggerCrossChapterPrefetch = useCallback(async () => {
+    if (isPrefetchingCrossChapterRef.current || !onPrefetchNextChapterRef.current) return;
+    isPrefetchingCrossChapterRef.current = true;
+    const generation = crossChapterGenerationRef.current;
+    try {
+      const nextSentences = await onPrefetchNextChapterRef.current();
+      if (generation !== crossChapterGenerationRef.current || !nextSentences?.length) return;
+
+      const voice = selectedVoiceURI || 'vi-VN-HoaiMyNeural';
+      const rate = speechRate;
+      const pitch = speechPitch;
+
+      const items = new Map<number, CrossChapterItem>();
+      nextSentences.slice(0, 2).forEach((txt, cIdx) => {
+        const clean = txt.trim();
+        if (!clean) return;
+        const promise = fetchEdgeTTSBlob(clean, voice, rate, pitch)
+          .then((blob) => {
+            if (generation !== crossChapterGenerationRef.current) return '';
+            const url = URL.createObjectURL(blob);
+            const it = items.get(cIdx);
+            if (it) it.blobUrl = url;
+            return url;
+          })
+          .catch((e) => {
+            console.warn('[CrossChapter Lookahead] Prefetch warning:', e);
+            items.delete(cIdx);
+            return '';
+          });
+        items.set(cIdx, { sentence: clean, blobUrl: null, promise });
+      });
+
+      crossChapterPrefetchRef.current = {
+        sentences: nextSentences,
+        items,
+      };
+    } catch (err) {
+      console.warn('[CrossChapter Lookahead] Failed:', err);
+    } finally {
+      if (generation === crossChapterGenerationRef.current) isPrefetchingCrossChapterRef.current = false;
+    }
+  }, [selectedVoiceURI, speechRate, speechPitch]);
 
   // 4. Core Speech Engines
   // A0. Microsoft Edge-TTS Studio Neural Engine (24kHz MP3 + Lookahead Queue)
   const playEdgeSentence = useCallback(
     async (idx: number) => {
+      const generation = playbackGenerationRef.current;
+      const ownsPlayback = () => isPlayingRef.current && generation === playbackGenerationRef.current;
       const audio = neuralAudioRef.current;
       if (!audio) return;
 
@@ -618,11 +840,12 @@ export function useTTS(
         return;
       }
 
-      const textToSpeak = list[idx].trim();
-      if (!textToSpeak) {
+      const rawText = list[idx].trim();
+      if (!rawText || !/[\p{L}\p{N}]/u.test(rawText)) {
         advanceToNext(idx);
         return;
       }
+      const textToSpeak = normalizeSentenceForTTS(rawText);
 
       setPlaybackState('loading');
       const voice = selectedVoiceURI || 'vi-VN-HoaiMyNeural';
@@ -638,7 +861,7 @@ export function useTTS(
           );
         }
 
-        if (!isPlayingRef.current) return;
+        if (!ownsPlayback()) return;
 
         // Revoke previously playing blob URL to prevent RAM leak
         if (currentBlobUrlRef.current && currentBlobUrlRef.current !== blobUrl) {
@@ -655,7 +878,12 @@ export function useTTS(
           effectiveVolume = volume * Math.max(0, currentTimer.remainingSeconds / 30);
         }
 
+        audio.loop = false;
         audio.src = blobUrl;
+        if (resumePositionRef.current !== null) {
+          audio.currentTime = resumePositionRef.current;
+          resumePositionRef.current = null;
+        }
         audio.playbackRate = speechRate;
         audio.volume = effectiveVolume;
 
@@ -663,9 +891,11 @@ export function useTTS(
         // Keep two sentences ahead so network jitter never leaves a gap (also helps with the screen locked)
         for (let ahead = 1; ahead <= 2; ahead++) {
           const nextIdx = idx + ahead;
-          if (nextIdx < list.length && list[nextIdx].trim()) {
+          const rawAhead = list[nextIdx]?.trim();
+          if (nextIdx < list.length && rawAhead && /[\p{L}\p{N}]/u.test(rawAhead)) {
+            const cleanAhead = normalizeSentenceForTTS(rawAhead);
             queue
-              .prefetch(nextIdx, list[nextIdx].trim(), (txt) =>
+              .prefetch(nextIdx, cleanAhead, (txt) =>
                 fetchEdgeTTSBlob(txt, voice, speechRate, speechPitch)
               )
               .catch((err) => {
@@ -674,27 +904,33 @@ export function useTTS(
           }
         }
 
+        // Cross-Chapter Lookahead: If nearing end of chapter, prefetch next chapter's intro
+        if (idx >= list.length - 2) {
+          triggerCrossChapterPrefetch();
+        }
+
         audio.onended = () => {
+          if (!ownsPlayback()) return;
           queue.revoke(idx);
           if (currentBlobUrlRef.current === blobUrl) {
             URL.revokeObjectURL(blobUrl);
             currentBlobUrlRef.current = null;
           }
 
-          if (!isPlayingRef.current) return;
-          advanceToNext(idx);
+          if (!ownsPlayback()) return;
+          advanceToNext(idx, true);
         };
 
         audio.onerror = (e) => {
+          if (!ownsPlayback()) return;
           console.warn('[Edge Audio] Playback error on sentence:', idx, e);
           queue.revoke(idx);
-          if (isPlayingRef.current) {
-            advanceToNext(idx);
-          }
+          handleEngineFailure(idx, new Error('Audio playback failed'), 'âm thanh');
         };
 
         await audio.play();
-        failCountRef.current = 0;
+        if (!ownsPlayback()) return;
+        retryCountRef.current = 0;
         setPlaybackState('playing');
         isPlayingRef.current = true;
 
@@ -705,16 +941,19 @@ export function useTTS(
         updateMediaSession(textToSpeak);
         queue.pruneOlderThan(idx);
       } catch (error) {
+        if (!ownsPlayback()) return;
         console.error('[Edge TTS] Error synthesizing sentence:', error);
         handleEngineFailure(idx, error, 'AI Studio');
       }
     },
-    [advanceToNext, handleEngineFailure, selectedVoiceURI, speechRate, speechPitch, volume, updateMediaSession]
+    [advanceToNext, handleEngineFailure, selectedVoiceURI, speechRate, speechPitch, volume, updateMediaSession, triggerCrossChapterPrefetch]
   );
 
   // A1. Kokoro Client-side WebGPU/WASM Engine (HTML5 <audio> + Lookahead Queue)
   const playKokoroSentence = useCallback(
     async (idx: number) => {
+      const generation = playbackGenerationRef.current;
+      const ownsPlayback = () => isPlayingRef.current && generation === playbackGenerationRef.current;
       const audio = neuralAudioRef.current;
       if (!audio) return;
 
@@ -725,11 +964,12 @@ export function useTTS(
         return;
       }
 
-      const textToSpeak = list[idx].trim();
-      if (!textToSpeak) {
+      const rawText = list[idx].trim();
+      if (!rawText || !/[\p{L}\p{N}]/u.test(rawText)) {
         advanceToNext(idx);
         return;
       }
+      const textToSpeak = normalizeSentenceForTTS(rawText);
 
       setPlaybackState('loading');
       const voiceKey = selectedVoiceURI.startsWith('kokoro:')
@@ -747,7 +987,7 @@ export function useTTS(
           );
         }
 
-        if (!isPlayingRef.current) return;
+        if (!ownsPlayback()) return;
 
         if (currentBlobUrlRef.current && currentBlobUrlRef.current !== blobUrl) {
           URL.revokeObjectURL(currentBlobUrlRef.current);
@@ -762,15 +1002,22 @@ export function useTTS(
           effectiveVolume = volume * Math.max(0, currentTimer.remainingSeconds / 30);
         }
 
+        audio.loop = false;
         audio.src = blobUrl;
+        if (resumePositionRef.current !== null) {
+          audio.currentTime = resumePositionRef.current;
+          resumePositionRef.current = null;
+        }
         audio.playbackRate = speechRate;
         audio.volume = effectiveVolume;
 
         // Lookahead Prefetching: Start synthesizing next sentence (idx + 1)
         const nextIdx = idx + 1;
-        if (nextIdx < list.length && list[nextIdx].trim()) {
+        const rawAhead = list[nextIdx]?.trim();
+        if (nextIdx < list.length && rawAhead && /[\p{L}\p{N}]/u.test(rawAhead)) {
+          const cleanAhead = normalizeSentenceForTTS(rawAhead);
           queue
-            .prefetch(nextIdx, list[nextIdx].trim(), (txt) =>
+            .prefetch(nextIdx, cleanAhead, (txt) =>
               kokoroService.synthesize(txt, voiceKey, speechRate)
             )
             .catch((err) => {
@@ -779,23 +1026,26 @@ export function useTTS(
         }
 
         audio.onended = () => {
+          if (!ownsPlayback()) return;
           queue.revoke(idx);
           if (currentBlobUrlRef.current === blobUrl) {
             URL.revokeObjectURL(blobUrl);
             currentBlobUrlRef.current = null;
           }
-          if (!isPlayingRef.current) return;
-          advanceToNext(idx);
+          if (!ownsPlayback()) return;
+          advanceToNext(idx, true);
         };
 
         audio.onerror = (e) => {
+          if (!ownsPlayback()) return;
           console.warn('[Kokoro Audio] Playback error on sentence:', idx, e);
           queue.revoke(idx);
-          if (isPlayingRef.current) advanceToNext(idx);
+          handleEngineFailure(idx, new Error('Audio playback failed'), 'âm thanh');
         };
 
         await audio.play();
-        failCountRef.current = 0;
+        if (!ownsPlayback()) return;
+        retryCountRef.current = 0;
         setPlaybackState('playing');
         isPlayingRef.current = true;
 
@@ -806,6 +1056,7 @@ export function useTTS(
         updateMediaSession(textToSpeak);
         queue.pruneOlderThan(idx);
       } catch (error) {
+        if (!ownsPlayback()) return;
         console.error('[Kokoro TTS] Error synthesizing sentence:', error);
         handleEngineFailure(idx, error, 'Kokoro');
       }
@@ -816,6 +1067,8 @@ export function useTTS(
   // A2. VieNeu-TTS 48kHz Engine (HTML5 <audio> + Lookahead Queue)
   const playVieNeuSentence = useCallback(
     async (idx: number) => {
+      const generation = playbackGenerationRef.current;
+      const ownsPlayback = () => isPlayingRef.current && generation === playbackGenerationRef.current;
       const audio = neuralAudioRef.current;
       if (!audio) return;
 
@@ -826,11 +1079,12 @@ export function useTTS(
         return;
       }
 
-      const textToSpeak = list[idx].trim();
-      if (!textToSpeak) {
+      const rawText = list[idx].trim();
+      if (!rawText || !/[\p{L}\p{N}]/u.test(rawText)) {
         advanceToNext(idx);
         return;
       }
+      const textToSpeak = normalizeSentenceForTTS(rawText);
 
       setPlaybackState('loading');
       const voiceKey = selectedVoiceURI.startsWith('vieneu:')
@@ -844,9 +1098,11 @@ export function useTTS(
       const kickLookahead = () => {
         for (let ahead = 0; ahead <= VIENEU_LOOKAHEAD; ahead++) {
           const i = idx + ahead;
-          if (i >= list.length || !list[i].trim()) continue;
+          const rawAhead = list[i]?.trim();
+          if (i >= list.length || !rawAhead || !/[\p{L}\p{N}]/u.test(rawAhead)) continue;
+          const cleanAhead = normalizeSentenceForTTS(rawAhead);
           queue
-            .prefetchSerial(i, list[i].trim(), (txt) =>
+            .prefetchSerial(i, cleanAhead, (txt) =>
               fetchVieNeuTTSBlob(txt, voiceKey, speechRate, speechPitch)
             )
             .catch((err) => {
@@ -859,7 +1115,7 @@ export function useTTS(
         kickLookahead();
         const blobUrl = (await queue.get(idx)?.promise) || '';
 
-        if (!isPlayingRef.current) return;
+        if (!ownsPlayback()) return;
 
         if (currentBlobUrlRef.current && currentBlobUrlRef.current !== blobUrl) {
           URL.revokeObjectURL(currentBlobUrlRef.current);
@@ -874,7 +1130,12 @@ export function useTTS(
           effectiveVolume = volume * Math.max(0, currentTimer.remainingSeconds / 30);
         }
 
+        audio.loop = false;
         audio.src = blobUrl;
+        if (resumePositionRef.current !== null) {
+          audio.currentTime = resumePositionRef.current;
+          resumePositionRef.current = null;
+        }
         audio.playbackRate = speechRate;
         audio.volume = effectiveVolume;
 
@@ -882,23 +1143,26 @@ export function useTTS(
         kickLookahead();
 
         audio.onended = () => {
+          if (!ownsPlayback()) return;
           queue.revoke(idx);
           if (currentBlobUrlRef.current === blobUrl) {
             URL.revokeObjectURL(blobUrl);
             currentBlobUrlRef.current = null;
           }
-          if (!isPlayingRef.current) return;
-          advanceToNext(idx);
+          if (!ownsPlayback()) return;
+          advanceToNext(idx, true);
         };
 
         audio.onerror = (e) => {
+          if (!ownsPlayback()) return;
           console.warn('[VieNeu Audio] Playback error on sentence:', idx, e);
           queue.revoke(idx);
-          if (isPlayingRef.current) advanceToNext(idx);
+          handleEngineFailure(idx, new Error('Audio playback failed'), 'âm thanh');
         };
 
         await audio.play();
-        failCountRef.current = 0;
+        if (!ownsPlayback()) return;
+        retryCountRef.current = 0;
         setPlaybackState('playing');
         isPlayingRef.current = true;
 
@@ -909,6 +1173,7 @@ export function useTTS(
         updateMediaSession(textToSpeak);
         queue.pruneOlderThan(idx);
       } catch (error) {
+        if (!ownsPlayback()) return;
         console.error('[VieNeu TTS] Error synthesizing sentence:', error);
         handleEngineFailure(idx, error, 'VieNeu');
       }
@@ -919,6 +1184,8 @@ export function useTTS(
   // A. Neural Piper WASM Engine (HTML5 <audio> + Lookahead Queue)
   const playNeuralSentence = useCallback(
     async (idx: number) => {
+      const generation = playbackGenerationRef.current;
+      const ownsPlayback = () => isPlayingRef.current && generation === playbackGenerationRef.current;
       const audio = neuralAudioRef.current;
       if (!audio) return;
 
@@ -952,7 +1219,7 @@ export function useTTS(
           blobUrl = await queue.prefetch(idx, textToSpeak, (txt) => synthesize(txt, speakerId));
         }
 
-        if (!isPlayingRef.current) return;
+        if (!ownsPlayback()) return;
 
         // Revoke previously playing blob URL to prevent RAM leak (TC-45)
         if (currentBlobUrlRef.current && currentBlobUrlRef.current !== blobUrl) {
@@ -969,20 +1236,28 @@ export function useTTS(
           effectiveVolume = volume * Math.max(0, currentTimer.remainingSeconds / 30);
         }
 
+        audio.loop = false;
         audio.src = blobUrl;
+        if (resumePositionRef.current !== null) {
+          audio.currentTime = resumePositionRef.current;
+          resumePositionRef.current = null;
+        }
         audio.playbackRate = speechRate;
         audio.volume = effectiveVolume;
 
         // Lookahead Prefetching: Start synthesizing next sentence (idx + 1) right away
         const nextIdx = idx + 1;
-        if (nextIdx < list.length && list[nextIdx].trim()) {
-          queue.prefetch(nextIdx, list[nextIdx].trim(), (txt) => synthesize(txt, speakerId)).catch((err) => {
+        const rawAhead = list[nextIdx]?.trim();
+        if (nextIdx < list.length && rawAhead && /[\p{L}\p{N}]/u.test(rawAhead)) {
+          const cleanAhead = normalizeSentenceForTTS(rawAhead);
+          queue.prefetch(nextIdx, cleanAhead, (txt) => synthesize(txt, speakerId)).catch((err) => {
             console.warn('[Piper Lookahead] Prefetch next sentence warning:', err);
           });
         }
 
         // Bind onended with instant zero-latency swap
         audio.onended = () => {
+          if (!ownsPlayback()) return;
           // Revoke memory of finished sentence immediately (TC-45)
           queue.revoke(idx);
           if (currentBlobUrlRef.current === blobUrl) {
@@ -990,20 +1265,20 @@ export function useTTS(
             currentBlobUrlRef.current = null;
           }
 
-          if (!isPlayingRef.current) return;
-          advanceToNext(idx);
+          if (!ownsPlayback()) return;
+          advanceToNext(idx, true);
         };
 
         audio.onerror = (e) => {
+          if (!ownsPlayback()) return;
           console.warn('[Piper Audio] Playback error on sentence:', idx, e);
           queue.revoke(idx);
-          if (isPlayingRef.current) {
-            advanceToNext(idx);
-          }
+          handleEngineFailure(idx, new Error('Audio playback failed'), 'âm thanh');
         };
 
         await audio.play();
-        failCountRef.current = 0;
+        if (!ownsPlayback()) return;
+        retryCountRef.current = 0;
         setPlaybackState('playing');
         isPlayingRef.current = true;
 
@@ -1016,15 +1291,15 @@ export function useTTS(
         // Also prune older sentences from memory
         queue.pruneOlderThan(idx);
       } catch (error) {
+        if (!ownsPlayback()) return;
         console.error('[Piper Neural TTS] Error synthesizing sentence:', error);
         // Fallback to system voice if model fails
-        if (isPlayingRef.current) {
-          advanceToNext(idx);
-        }
+        handleEngineFailure(idx, error, 'Piper');
       }
     },
     [
       advanceToNext,
+      handleEngineFailure,
       selectedVoiceURI,
       neuralSpeakerId,
       volume,
@@ -1036,6 +1311,8 @@ export function useTTS(
   // B. System Web Speech API Engine
   const playSystemSentence = useCallback(
     (idx: number) => {
+      const generation = playbackGenerationRef.current;
+      const ownsPlayback = () => isPlayingRef.current && generation === playbackGenerationRef.current;
       if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
       const synth = window.speechSynthesis;
       const list = sentencesRef.current;
@@ -1048,11 +1325,12 @@ export function useTTS(
         return;
       }
 
-      const textToSpeak = list[idx].trim();
-      if (!textToSpeak) {
+      const rawText = list[idx].trim();
+      if (!rawText || !/[\p{L}\p{N}]/u.test(rawText)) {
         advanceToNext(idx);
         return;
       }
+      const textToSpeak = normalizeSentenceForTTS(rawText);
 
       synth.cancel();
 
@@ -1077,6 +1355,7 @@ export function useTTS(
       }
 
       utterance.onstart = () => {
+        if (!ownsPlayback()) return;
         setPlaybackState('playing');
         isPlayingRef.current = true;
         if (onSentenceChangeRef.current) {
@@ -1086,22 +1365,22 @@ export function useTTS(
       };
 
       utterance.onend = () => {
+        if (!ownsPlayback()) return;
         activeUtteranceRef.current = null;
         (window as any).__activeUtterance = null;
 
-        if (!isPlayingRef.current) return;
-        advanceToNext(idx);
+        if (!ownsPlayback()) return;
+        advanceToNext(idx, true);
       };
 
       utterance.onerror = (event) => {
+        if (!ownsPlayback()) return;
         activeUtteranceRef.current = null;
         (window as any).__activeUtterance = null;
 
         console.warn('SpeechSynthesis error:', event);
         if (event.error !== 'interrupted' && event.error !== 'canceled') {
-          if (isPlayingRef.current) {
-            advanceToNext(idx);
-          }
+          handleEngineFailure(idx, new Error('Audio playback failed'), 'âm thanh');
         }
       };
 
@@ -1110,6 +1389,7 @@ export function useTTS(
     },
     [
       advanceToNext,
+      handleEngineFailure,
       speechRate,
       speechPitch,
       volume,
@@ -1122,6 +1402,20 @@ export function useTTS(
 
   // Unified Play Current Sentence Dispatcher
   const playCurrentSentence = useCallback(() => {
+    invalidatePlayback();
+    if (!isPlayingRef.current) return;
+    const audio = neuralAudioRef.current;
+    if (audio) {
+      audio.onended = null;
+      audio.onerror = null;
+      // Replacing media is intentional; do not treat this pause as an OS interruption.
+      if (!userGesturePrimeRef.current) {
+        isPlayingRef.current = false;
+        pauseAudioInternally(audio);
+        isPlayingRef.current = true;
+      }
+      userGesturePrimeRef.current = false;
+    }
     const isKokoro =
       selectedVoiceURI.startsWith('kokoro:') ||
       engineMode === 'kokoro';
@@ -1172,11 +1466,12 @@ export function useTTS(
       playNeuralSentence(idx);
     } else {
       if (neuralAudioRef.current) {
-        neuralAudioRef.current.pause();
+        pauseAudioInternally(neuralAudioRef.current);
       }
       playSystemSentence(idx);
     }
   }, [
+    invalidatePlayback,
     selectedVoiceURI,
     engineMode,
     isModelReady,
@@ -1201,19 +1496,27 @@ export function useTTS(
       if (silentAudioRef.current) {
         silentAudioRef.current.play().catch(() => {});
       }
-      if (neuralAudioRef.current) {
-        // Drop stale handlers first: play() on an element without media raises 'error', and the old
-        // onerror would advance the queue (skipping a sentence)
-        neuralAudioRef.current.onended = null;
-        neuralAudioRef.current.onerror = null;
-        neuralAudioRef.current.play().catch(() => {});
+      if (neuralAudioRef.current && silentAudioRef.current?.src) {
+        const audio = neuralAudioRef.current;
+        audio.onended = null;
+        audio.onerror = null;
+        // Unlock this SAME persistent media element with valid media while the tap
+        // gesture is active. Never replay the previous ended/revoked chapter URL.
+        isPlayingRef.current = false;
+        pauseAudioInternally(audio);
+        audio.src = silentAudioRef.current.src;
+        audio.loop = true;
+        userGesturePrimeRef.current = true;
+        audio.play().catch(() => {});
       }
+      chapterTransitionRef.current = false;
 
       if (textList && textList.length > 0) {
         setSentences(textList);
         sentencesRef.current = textList;
       }
 
+      resumePositionRef.current = null;
       const targetIdx = startIndex !== undefined ? startIndex : currentSentenceIndexRef.current;
       currentSentenceIndexRef.current = targetIdx;
       setCurrentSentenceIndex(targetIdx);
@@ -1226,12 +1529,51 @@ export function useTTS(
     [playCurrentSentence]
   );
 
+  const prepareChapterTransition = useCallback(() => {
+    invalidatePlayback();
+    resumePositionRef.current = null;
+    userGesturePrimeRef.current = false;
+    chapterTransitionRef.current = true;
+    isPlayingRef.current = true;
+    const audio = neuralAudioRef.current;
+    if (audio) {
+      audio.onended = null;
+      audio.onerror = null;
+      pauseAudioInternally(audio);
+    }
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel();
+    // Keep the audio session alive across asynchronous EPUB layout/fetch. Public
+    // pause() intentionally stops this session and is reserved for user cancellation.
+    if (silentAudioRef.current?.paused) silentAudioRef.current.play().catch(() => {});
+    setPlaybackState('loading');
+    try { navigator.mediaSession.playbackState = 'playing'; } catch {}
+  }, [invalidatePlayback]);
+
   const pause = useCallback(() => {
+    onPlaybackCancelledRef.current?.();
+    chapterTransitionRef.current = false;
+    userGesturePrimeRef.current = false;
+    const nextAfterGap = pendingGapNextIndexRef.current;
+    invalidatePlayback();
+    const audio = neuralAudioRef.current;
+    if (nextAfterGap !== null) {
+      // The preceding sentence finished already; resume at the waiting sentence.
+      currentSentenceIndexRef.current = nextAfterGap;
+      setCurrentSentenceIndex(nextAfterGap);
+      if (audio) {
+        audio.onended = null;
+        audio.onerror = null;
+        audio.removeAttribute('src');
+        audio.load();
+      }
+    }
+    resumePositionRef.current = audio && !audio.paused && !audio.ended && !audio.error
+      ? audio.currentTime : null;
     isPlayingRef.current = false;
 
     // Pause Neural / Edge audio
     if (neuralAudioRef.current) {
-      neuralAudioRef.current.pause();
+      pauseAudioInternally(neuralAudioRef.current);
     }
 
     // Pause System synth
@@ -1246,41 +1588,33 @@ export function useTTS(
     if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
       navigator.mediaSession.playbackState = 'paused';
     }
-  }, [stopKeepAlive]);
+  }, [stopKeepAlive, invalidatePlayback]);
 
   const resume = useCallback(() => {
     isPlayingRef.current = true;
     setPlaybackState('playing');
 
-    const isAudioEngine =
-      selectedVoiceURI.startsWith('kokoro:') ||
-      selectedVoiceURI.startsWith('vieneu:') ||
-      selectedVoiceURI === 'vi-VN-HoaiMyNeural' ||
-      selectedVoiceURI === 'vi-VN-NamMinhNeural' ||
-      selectedVoiceURI.endsWith('Neural') ||
-      selectedVoiceURI.startsWith('vi-') ||
-      selectedVoiceURI.startsWith('en-US') ||
-      engineMode === 'kokoro' ||
-      engineMode === 'vieneu' ||
-      engineMode === 'edge' ||
-      ((selectedVoiceURI.startsWith('piper:') || engineMode === 'neural') && isModelReady);
-
-    if (isAudioEngine && neuralAudioRef.current && neuralAudioRef.current.src) {
-      if (silentAudioRef.current) silentAudioRef.current.play().catch(() => {});
-      neuralAudioRef.current.play().catch(() => {
-        playCurrentSentence();
-      });
-    } else {
-      if (silentAudioRef.current) silentAudioRef.current.play().catch(() => {});
-      playCurrentSentence();
-    }
-  }, [selectedVoiceURI, engineMode, isModelReady, playCurrentSentence]);
+    setPlaybackAudioSession();
+    if (silentAudioRef.current) silentAudioRef.current.play().catch(() => {});
+    playCurrentSentence();
+  }, [playCurrentSentence]);
 
   const stop = useCallback(() => {
+    onPlaybackCancelledRef.current?.();
+    chapterTransitionRef.current = false;
+    userGesturePrimeRef.current = false;
+    const nextAfterGap = pendingGapNextIndexRef.current;
+    invalidatePlayback();
+    if (nextAfterGap !== null) {
+      currentSentenceIndexRef.current = nextAfterGap;
+      setCurrentSentenceIndex(nextAfterGap);
+    }
+    clearCrossChapterPrefetch();
+    resumePositionRef.current = null;
     isPlayingRef.current = false;
 
     if (neuralAudioRef.current) {
-      neuralAudioRef.current.pause();
+      pauseAudioInternally(neuralAudioRef.current);
       neuralAudioRef.current.removeAttribute('src');
       neuralAudioRef.current.load();
     }
@@ -1302,9 +1636,10 @@ export function useTTS(
     if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
       navigator.mediaSession.playbackState = 'none';
     }
-  }, [stopKeepAlive]);
+  }, [stopKeepAlive, invalidatePlayback, clearCrossChapterPrefetch]);
 
   const nextSentence = useCallback(() => {
+    resumePositionRef.current = null;
     const nextIdx = Math.min(sentencesRef.current.length - 1, currentSentenceIndexRef.current + 1);
     currentSentenceIndexRef.current = nextIdx;
     setCurrentSentenceIndex(nextIdx);
@@ -1314,6 +1649,7 @@ export function useTTS(
   }, [playCurrentSentence]);
 
   const prevSentence = useCallback(() => {
+    resumePositionRef.current = null;
     const prevIdx = Math.max(0, currentSentenceIndexRef.current - 1);
     lookaheadQueueRef.current.clear(); // going back: the queued sentences are for the wrong direction
     currentSentenceIndexRef.current = prevIdx;
@@ -1325,6 +1661,7 @@ export function useTTS(
 
   const jumpToSentence = useCallback(
     (index: number) => {
+      resumePositionRef.current = null;
       const clamped = Math.max(0, Math.min(sentencesRef.current.length - 1, index));
       // A jump outside the prefetched window: drop the queue so stale synthesis does not delay the new spot
       const cur = currentSentenceIndexRef.current;
@@ -1339,12 +1676,47 @@ export function useTTS(
   );
 
   const setSentencesList = useCallback((list: string[], initialIndex: number = 0) => {
+    if (initialIndex === currentSentenceIndexRef.current && list.length === sentencesRef.current.length &&
+        list.every((text, index) => text === sentencesRef.current[index])) return;
+    invalidatePlayback();
+    resumePositionRef.current = null;
     setSentences(list);
     sentencesRef.current = list;
     currentSentenceIndexRef.current = initialIndex;
     setCurrentSentenceIndex(initialIndex);
+
+    // Check if we have pre-fetched cross-chapter audio ready for the new chapter
+    const crossPrefetch = crossChapterPrefetchRef.current;
+    crossChapterPrefetchRef.current = null;
+    isPrefetchingCrossChapterRef.current = false;
+
     lookaheadQueueRef.current.clear();
-  }, []);
+
+    const matches = crossPrefetch && initialIndex === 0 &&
+      crossPrefetch.sentences.length <= list.length &&
+      crossPrefetch.sentences.every((text, index) => text === list[index]);
+    if (matches) {
+      crossPrefetch.items.forEach((item, cIdx) => {
+        // A pending failed cross-chapter request returns an empty URL; fresh synthesis owns retries.
+        if (item.blobUrl) lookaheadQueueRef.current.injectItem(cIdx, list[cIdx], item.promise, item.blobUrl);
+        else item.promise.then((url) => { if (url) URL.revokeObjectURL(url); }).catch(() => {});
+      });
+    } else {
+      crossChapterPrefetchRef.current = crossPrefetch;
+      clearCrossChapterPrefetch();
+    }
+  }, [invalidatePlayback, clearCrossChapterPrefetch]);
+
+  const continueChapter = useCallback((textList: string[], startIndex = 0) => {
+    // A pause/stop while the chapter was loading cancels automatic continuation.
+    if (!isPlayingRef.current || !chapterTransitionRef.current) return;
+    setSentencesList(textList, startIndex);
+    chapterTransitionRef.current = false;
+    resumePositionRef.current = null;
+    setPlaybackAudioSession();
+    setPlaybackState('loading');
+    playCurrentSentenceRef.current();
+  }, [setSentencesList]);
 
   // 6. Sleep Timer Handler
   const startSleepTimer = useCallback((duration: number | 'chapter') => {
@@ -1422,12 +1794,13 @@ export function useTTS(
     const key = `${selectedVoiceURI}|${vieneuMode}`;
     if (prevVoiceRef.current !== key) {
       prevVoiceRef.current = key;
+      clearCrossChapterPrefetch();
       lookaheadQueueRef.current.clear();
       if (isPlayingRef.current) {
         playCurrentSentence();
       }
     }
-  }, [selectedVoiceURI, vieneuMode, playCurrentSentence]);
+  }, [selectedVoiceURI, vieneuMode, playCurrentSentence, clearCrossChapterPrefetch]);
 
   // Rate and volume update for active HTML5 audio
   useEffect(() => {
@@ -1734,6 +2107,8 @@ export function useTTS(
     currentSentence: sentences[currentSentenceIndex] || '',
     sleepTimer,
     play,
+    prepareChapterTransition,
+    continueChapter,
     pause,
     resume,
     stop,

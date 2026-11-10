@@ -52,8 +52,11 @@ export const App: React.FC = () => {
   const handleChapterComplete = useCallback(() => {
     if (chapterControlsRef.current) {
       autoPlayNextChapterRef.current = true;
-      chapterControlsRef.current.nextChapter();
+      const advanced = chapterControlsRef.current.nextChapter();
+      if (!advanced) autoPlayNextChapterRef.current = false;
+      return advanced;
     }
+    return false;
   }, []);
 
   // Core TTS hook
@@ -65,6 +68,8 @@ export const App: React.FC = () => {
     sentences,
     sleepTimer,
     play,
+    continueChapter,
+    prepareChapterTransition,
     pause,
     stop,
     nextSentence,
@@ -80,9 +85,33 @@ export const App: React.FC = () => {
     downloadKokoroModel,
   } = useTTS({
     onChapterComplete: handleChapterComplete,
+    onPlaybackCancelled: () => { autoPlayNextChapterRef.current = false; },
+    onPrefetchNextChapter: useCallback(async () => {
+      if (chapterControlsRef.current?.getNextChapterSentences) {
+        return await chapterControlsRef.current.getNextChapterSentences(2);
+      }
+      return [];
+    }, []),
     bookTitle: currentBook?.title,
     bookCoverUrl: currentBook?.coverUrl,
   });
+
+  const handlePause = useCallback(() => {
+    autoPlayNextChapterRef.current = false;
+    pause();
+  }, [pause]);
+
+  const handleStop = useCallback(() => {
+    autoPlayNextChapterRef.current = false;
+    stop();
+  }, [stop]);
+
+  const handleChapterNavigation = useCallback(() => {
+    const shouldResume = autoPlayNextChapterRef.current ||
+      playbackState === 'playing' || playbackState === 'loading';
+    if (shouldResume) prepareChapterTransition();
+    autoPlayNextChapterRef.current = shouldResume;
+  }, [playbackState, prepareChapterTransition]);
 
   // Static hosting (e.g. GitHub Pages) has no /api/tts: probe once and fall back to an on-device voice
   const [serverTTS, setServerTTS] = useState<boolean | null>(null);
@@ -120,11 +149,23 @@ export const App: React.FC = () => {
     message.info('Bản web tĩnh không có giọng AI từ server. Đã chuyển sang giọng Tiếng Việt của thiết bị.');
   }, [serverTTS, vietnameseVoices, voices, selectedVoiceURI, setSelectedVoiceURI]);
 
+  const ACTIVE_BOOK_KEY = 'audioepub_active_book_id';
+
   // Load books from IndexedDB
   const loadBooks = useCallback(async () => {
     try {
       const list = await db.books.toArray();
       setBooks(list);
+
+      // Auto restore active reading book if page was reloaded or tab was discarded by browser
+      const savedBookIdStr = localStorage.getItem(ACTIVE_BOOK_KEY);
+      if (savedBookIdStr) {
+        const savedBookId = Number(savedBookIdStr);
+        const found = list.find((b) => b.id === savedBookId);
+        if (found) {
+          setCurrentBook((prev) => prev || found);
+        }
+      }
     } catch (err) {
       console.error('Error loading books:', err);
       message.error('Không thể nạp danh sách sách từ IndexedDB');
@@ -166,14 +207,20 @@ export const App: React.FC = () => {
 
   // Handle select book to read
   const handleSelectBook = (book: Book) => {
+    autoPlayNextChapterRef.current = false;
     stop(); // stop any current speech
     setChromeVisible(true);
     setIsPlayerSheetOpen(false);
+    if (book.id) {
+      localStorage.setItem(ACTIVE_BOOK_KEY, String(book.id));
+    }
     setCurrentBook(book);
   };
 
   const handleBackToShelf = () => {
+    autoPlayNextChapterRef.current = false;
     stop();
+    localStorage.removeItem(ACTIVE_BOOK_KEY);
     setIsPlayerSheetOpen(false);
     setCurrentBook(null);
     loadBooks(); // refresh progress
@@ -182,14 +229,20 @@ export const App: React.FC = () => {
   // Callback when ReaderView extracts new sentences from current chapter
   const handleSentencesReady = useCallback(
     (newSentences: string[], keepIndex?: number) => {
+      if (autoPlayNextChapterRef.current && newSentences.length === 0) {
+        // Image-only or empty spine sections must not silently end narration.
+        if (!handleChapterComplete()) stop();
+        return;
+      }
       const start = Math.min(keepIndex ?? 0, Math.max(0, newSentences.length - 1));
-      setSentencesList(newSentences, start);
       if (autoPlayNextChapterRef.current) {
         autoPlayNextChapterRef.current = false;
-        play(newSentences, start);
+        continueChapter(newSentences, start);
+      } else {
+        setSentencesList(newSentences, start);
       }
     },
-    [setSentencesList, play]
+    [setSentencesList, continueChapter, handleChapterComplete, stop]
   );
 
   // Listen mode is "on" whenever the player has something loaded/playing/paused
@@ -264,6 +317,7 @@ export const App: React.FC = () => {
         >
           {/* Top Header Navbar */}
           <div
+            className={`app-header-bar${currentBook && !chromeVisible ? ' reader-chrome-hidden' : ''}`}
             style={
               currentBook
                 ? {
@@ -296,6 +350,7 @@ export const App: React.FC = () => {
 
           {/* Content View: Shelf or Reader */}
           <main
+            className={currentBook && playerActive ? 'has-active-player' : ''}
             style={{
               flex: 1,
               minHeight: 0,
@@ -303,25 +358,59 @@ export const App: React.FC = () => {
               display: 'flex',
               flexDirection: 'column',
               overflow: 'hidden',
-              // Reserve room for the mini-player so it never covers the text
-              paddingBottom: currentBook && playerActive ? 'calc(64px + var(--sab, 0px))' : 0,
               transition: 'padding-bottom 0.2s ease',
             }}
           >
             {currentBook ? (
-              <ReaderView
-                book={currentBook}
-                currentSentenceIndex={currentSentenceIndex}
-                onSentencesReady={handleSentencesReady}
-                onChapterChanged={handleChapterChanged}
-                onSentenceTap={handleSentenceTap}
-                onSentenceLongPress={startListen}
-                onSentenceDoubleTap={jumpToSentence}
-                onStartListen={startListen}
-                chromeVisible={chromeVisible}
-                playerActive={playerActive}
-                registerChapterControls={registerChapterControls}
-              />
+              <div className="reader-split-layout">
+                {/* 30% Left Column Audio Player for Desktop */}
+                {playerActive && (
+                  <div className="reader-desktop-sidebar">
+                    <Player
+                      mode="sidebar"
+                      playbackState={playbackState}
+                      onPlay={() => play()}
+                      onPause={handlePause}
+                      onNextSentence={nextSentence}
+                      onPrevSentence={prevSentence}
+                      onNextChapter={() => chapterControlsRef.current?.nextChapter()}
+                      onPrevChapter={() => chapterControlsRef.current?.prevChapter()}
+                      onClose={handleStop}
+                      onOpenTimer={() => setIsTimerModalOpen(true)}
+                      onOpenVoice={handleOpenVoiceSettings}
+                      sheetOpen={isPlayerSheetOpen}
+                      onSheetOpenChange={setIsPlayerSheetOpen}
+                      chapterTitle={chapterInfo.title}
+                      chapterIndex={chapterInfo.index}
+                      totalChapters={chapterInfo.total}
+                      sentenceIndex={currentSentenceIndex}
+                      totalSentences={sentences.length}
+                      bookTitle={currentBook.title}
+                      bookCoverUrl={currentBook.coverUrl}
+                      sleepTimer={sleepTimer}
+                    />
+                  </div>
+                )}
+
+                {/* 70% Right Column EPUB Reading Text */}
+                <div className="reader-main-column">
+                  <ReaderView
+                    book={currentBook}
+                    currentSentenceIndex={currentSentenceIndex}
+                    onSentencesReady={handleSentencesReady}
+                    onChapterNavigation={handleChapterNavigation}
+                    onChapterNavigationFailed={handlePause}
+                    onChapterChanged={handleChapterChanged}
+                    onSentenceTap={handleSentenceTap}
+                    onSentenceLongPress={startListen}
+                    onSentenceDoubleTap={jumpToSentence}
+                    onStartListen={startListen}
+                    chromeVisible={chromeVisible}
+                    playerActive={playerActive}
+                    registerChapterControls={registerChapterControls}
+                  />
+                </div>
+              </div>
             ) : (
               <BookShelf
                 books={books}
@@ -329,34 +418,38 @@ export const App: React.FC = () => {
                 onRefreshBooks={loadBooks}
                 isUploadModalOpen={isUploadModalOpen}
                 onCloseUploadModal={() => setIsUploadModalOpen(false)}
+                onOpenUploadModal={() => setIsUploadModalOpen(true)}
               />
             )}
           </main>
 
-          {/* Listen mode: mini-player + full player sheet (only while audio is active) */}
+          {/* Mobile Player: Mini-player docked at bottom + bottom sheet (hidden on desktop via CSS) */}
           {currentBook && playerActive && (
-            <Player
-              playbackState={playbackState}
-              onPlay={() => play()}
-              onPause={pause}
-              onNextSentence={nextSentence}
-              onPrevSentence={prevSentence}
-              onNextChapter={() => chapterControlsRef.current?.nextChapter()}
-              onPrevChapter={() => chapterControlsRef.current?.prevChapter()}
-              onClose={stop}
-              onOpenTimer={() => setIsTimerModalOpen(true)}
-              onOpenVoice={handleOpenVoiceSettings}
-              sheetOpen={isPlayerSheetOpen}
-              onSheetOpenChange={setIsPlayerSheetOpen}
-              chapterTitle={chapterInfo.title}
-              chapterIndex={chapterInfo.index}
-              totalChapters={chapterInfo.total}
-              sentenceIndex={currentSentenceIndex}
-              totalSentences={sentences.length}
-              bookTitle={currentBook.title}
-              bookCoverUrl={currentBook.coverUrl}
-              sleepTimer={sleepTimer}
-            />
+            <div className="mobile-only-player">
+              <Player
+                mode="mobile"
+                playbackState={playbackState}
+                onPlay={() => play()}
+                onPause={handlePause}
+                onNextSentence={nextSentence}
+                onPrevSentence={prevSentence}
+                onNextChapter={() => chapterControlsRef.current?.nextChapter()}
+                onPrevChapter={() => chapterControlsRef.current?.prevChapter()}
+                onClose={handleStop}
+                onOpenTimer={() => setIsTimerModalOpen(true)}
+                onOpenVoice={handleOpenVoiceSettings}
+                sheetOpen={isPlayerSheetOpen}
+                onSheetOpenChange={setIsPlayerSheetOpen}
+                chapterTitle={chapterInfo.title}
+                chapterIndex={chapterInfo.index}
+                totalChapters={chapterInfo.total}
+                sentenceIndex={currentSentenceIndex}
+                totalSentences={sentences.length}
+                bookTitle={currentBook.title}
+                bookCoverUrl={currentBook.coverUrl}
+                sleepTimer={sleepTimer}
+              />
+            </div>
           )}
 
           <StorageModal

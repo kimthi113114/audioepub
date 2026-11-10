@@ -1,3 +1,4 @@
+import { requestTTSBlob } from './ttsRequest';
 import { apiUrl } from '../utils/apiBase';
 
 export interface EdgeVoice {
@@ -106,7 +107,7 @@ export async function fetchEdgeTTSBlob(
     throw new Error('Text to synthesize cannot be empty');
   }
 
-  const response = await fetch(apiUrl('/api/tts'), {
+  return requestTTSBlob(apiUrl('/api/tts'), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -119,12 +120,6 @@ export async function fetchEdgeTTSBlob(
     }),
   });
 
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => 'Network error');
-    throw new Error(`Edge TTS API failed (${response.status}): ${errorText}`);
-  }
-
-  return await response.blob();
 }
 
 /**

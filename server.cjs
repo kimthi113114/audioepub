@@ -9,15 +9,74 @@ const DIST_DIR = path.join(__dirname, 'dist');
 const MAX_CACHE_ENTRIES = 500;
 const audioCache = new Map();
 const ttsInstances = new Map();
+const IDLE_TIMEOUT_MS = 90000;
 
-async function getTTSInstance(voiceName) {
-  if (ttsInstances.has(voiceName)) {
-    return ttsInstances.get(voiceName);
+function closeTTSInstance(voiceName) {
+  const item = ttsInstances.get(voiceName);
+  if (item) {
+    ttsInstances.delete(voiceName);
+    try {
+      item.tts.close();
+    } catch {}
   }
-  const tts = new MsEdgeTTS();
+}
+
+async function getTTSInstance(voiceName, forceNew = false) {
+  if (!forceNew && ttsInstances.has(voiceName)) {
+    const item = ttsInstances.get(voiceName);
+    item.lastUsed = Date.now();
+    return item.tts;
+  }
+  if (forceNew) {
+    closeTTSInstance(voiceName);
+  }
+  const tts = new MsEdgeTTS({
+    connectionTimeoutMs: 15000,
+    synthesisTimeoutMs: 30000,
+  });
   await tts.setMetadata(voiceName, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
-  ttsInstances.set(voiceName, tts);
+  ttsInstances.set(voiceName, { tts, lastUsed: Date.now() });
   return tts;
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [voiceName, item] of ttsInstances.entries()) {
+    if (now - item.lastUsed > IDLE_TIMEOUT_MS) {
+      closeTTSInstance(voiceName);
+    }
+  }
+}, 30000);
+
+async function synthesizeEdgeAudio(voice, cleanText, rateStr, pitchStr) {
+  const doSynth = async (forceNew) => {
+    const tts = await getTTSInstance(voice, forceNew);
+    return new Promise((resolve, reject) => {
+      let isDone = false;
+      const { audioStream } = tts.toStream(cleanText, { rate: rateStr, pitch: pitchStr });
+      const chunks = [];
+      audioStream.on('data', c => chunks.push(c));
+      audioStream.on('end', () => {
+        if (isDone) return;
+        isDone = true;
+        resolve(Buffer.concat(chunks));
+      });
+      audioStream.on('error', err => {
+        if (isDone) return;
+        isDone = true;
+        closeTTSInstance(voice);
+        reject(err);
+      });
+    });
+  };
+
+  try {
+    return await doSynth(false);
+  } catch (err) {
+    console.warn(`[Server Edge-TTS] Stream error (${err?.message}). Retrying once with fresh connection...`);
+    await new Promise(r => setTimeout(r, 500));
+    return await doSynth(true);
+  }
 }
 
 const MIME_TYPES = {
@@ -61,11 +120,27 @@ const server = http.createServer(async (req, res) => {
         pitch = data.pitch !== undefined ? parseFloat(data.pitch) : 1.0;
       }
 
-      const cleanText = text.trim();
+      let cleanText = text.trim();
       if (!cleanText) {
         res.statusCode = 400;
         return res.end('Missing text parameter');
       }
+
+      // Skip synthesis if text has no letters or digits (e.g. only "...", "---", "***")
+      if (!/[\p{L}\p{N}]/u.test(cleanText)) {
+        res.statusCode = 204;
+        return res.end();
+      }
+
+      // Normalize ellipsis to prevent neural TTS from vocalizing "chấm chấm chấm" or stuttering
+      cleanText = cleanText
+        .replace(/[.…]{2,}$/u, '.')
+        .replace(/…$/u, '.')
+        .replace(/\s*[.…]{2,}\s*/gu, ', ')
+        .replace(/\s*…\s*/gu, ', ')
+        .replace(/,\s*,+/g, ',')
+        .replace(/\.\s*\.+/g, '.')
+        .trim();
 
       const cacheKey = `${voice}:${rate.toFixed(2)}:${pitch.toFixed(2)}:${cleanText}`;
       if (audioCache.has(cacheKey)) {
@@ -81,27 +156,16 @@ const server = http.createServer(async (req, res) => {
       const pitchHz = Math.round((pitch - 1.0) * 50);
       const pitchStr = pitchHz >= 0 ? `+${pitchHz}Hz` : `${pitchHz}Hz`;
 
-      const tts = await getTTSInstance(voice);
-      const { audioStream } = tts.toStream(cleanText, { rate: rateStr, pitch: pitchStr });
-
-      const chunks = [];
-      audioStream.on('data', c => chunks.push(c));
-      audioStream.on('end', () => {
-        const buf = Buffer.concat(chunks);
-        if (audioCache.size >= MAX_CACHE_ENTRIES) {
-          const firstKey = audioCache.keys().next().value;
-          audioCache.delete(firstKey);
-        }
-        audioCache.set(cacheKey, buf);
-        res.setHeader('Content-Type', 'audio/mpeg');
-        res.setHeader('Content-Length', buf.length);
-        res.setHeader('X-Cache', 'MISS');
-        res.end(buf);
-      });
-      audioStream.on('error', err => {
-        res.statusCode = 500;
-        res.end(JSON.stringify({ error: err.message }));
-      });
+      const buf = await synthesizeEdgeAudio(voice, cleanText, rateStr, pitchStr);
+      if (audioCache.size >= MAX_CACHE_ENTRIES) {
+        const firstKey = audioCache.keys().next().value;
+        audioCache.delete(firstKey);
+      }
+      audioCache.set(cacheKey, buf);
+      res.setHeader('Content-Type', 'audio/mpeg');
+      res.setHeader('Content-Length', buf.length);
+      res.setHeader('X-Cache', 'MISS');
+      res.end(buf);
     } catch (err) {
       res.statusCode = 500;
       res.end(JSON.stringify({ error: err.message }));

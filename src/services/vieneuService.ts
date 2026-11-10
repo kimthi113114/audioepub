@@ -1,3 +1,4 @@
+import { requestTTSBlob } from './ttsRequest';
 import type { VieNeuMode, VieNeuVoiceItem } from '../types';
 import { apiUrl } from '../utils/apiBase';
 import { useSettingsStore } from '../store/useSettingsStore';
@@ -456,7 +457,7 @@ export async function fetchVieNeuTTSBlob(
     throw new Error('Text cannot be empty');
   }
 
-  const response = await fetch(apiUrl('/api/tts'), {
+  return requestTTSBlob(apiUrl('/api/tts'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -467,12 +468,6 @@ export async function fetchVieNeuTTSBlob(
       rate,
       pitch,
     }),
-  });
+  }, 90000);
 
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => 'Network error');
-    throw new Error(`VieNeu TTS failed (${response.status}): ${errorText}`);
-  }
-
-  return await response.blob();
 }
