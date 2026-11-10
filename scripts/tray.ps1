@@ -21,15 +21,24 @@ try {
     Start-Process -FilePath "tailscale" -ArgumentList "serve --bg $port" -WindowStyle Hidden -ErrorAction SilentlyContinue
 } catch {}
 
-# 2. Check if a Tray instance is already running
-$runningTray = Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction SilentlyContinue | Where-Object {
-    $_.CommandLine -like "*tray.ps1*" -and $_.ProcessId -ne $PID
+# 2. Check if a Tray instance is already running via PID file
+$pidFile = Join-Path $projectDir "node_modules\.tray.pid"
+if (Test-Path $pidFile) {
+    try {
+        $oldPid = [int]((Get-Content $pidFile -Raw).Trim())
+        if ($oldPid -gt 0 -and $oldPid -ne $PID) {
+            $proc = Get-Process -Id $oldPid -ErrorAction SilentlyContinue
+            if ($proc -and $proc.ProcessName -ieq "powershell") {
+                # Another tray is already active! Just open browser and exit
+                Start-Process $primaryUrl
+                exit 0
+            }
+        }
+    } catch {}
 }
-if ($runningTray) {
-    # Tray is already running! Just open the browser and exit this duplicate script
-    Start-Process $primaryUrl
-    exit 0
-}
+
+# Record current PID
+try { Set-Content -Path $pidFile -Value $PID -Force } catch {}
 
 # 3. Check if Vite/Node server is already running on port 5173
 $serverProcess = $null
@@ -64,8 +73,8 @@ if (-not $serverProcess) {
         $serverProcess = Start-Process -FilePath $nodeExe -ArgumentList "`"$viteBin`"" -WorkingDirectory $projectDir -WindowStyle Hidden -PassThru
     }
     
-    # Wait up to 3 seconds for port 5173 to be ready
-    for ($i = 0; $i -lt 6; $i++) {
+    # Wait up to 4 seconds for port 5173 to be ready
+    for ($i = 0; $i -lt 8; $i++) {
         Start-Sleep -Milliseconds 500
         $conn = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($conn) { break }
@@ -153,6 +162,9 @@ $exitItem.add_Click({
             Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue
         }
     } catch {}
+
+    # Remove PID file
+    try { Remove-Item -Path $pidFile -Force -ErrorAction SilentlyContinue } catch {}
 
     # Remove Tray Icon & Exit
     $notifyIcon.Visible = $false
