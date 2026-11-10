@@ -1,24 +1,11 @@
 # AudioEpub System Tray Runner
-# Manages the Vite development server in the background and provides tray controls.
+# Manages the Vite development server in the background, shows tray icon, and opens app in browser.
 
 param(
     [switch]$NoOpenBrowser
 )
 
 $ErrorActionPreference = "SilentlyContinue"
-
-# Ensure single instance of the tray app
-$createdNew = $false
-$mutex = New-Object System.Threading.Mutex($true, "AudioEpubTrayMutex", [ref]$createdNew)
-if (-not $createdNew) {
-    # If already running, open the app and exit this launcher
-    Start-Process "https://novel.tail356389.ts.net"
-    exit 0
-}
-
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
-[System.Windows.Forms.Application]::EnableVisualStyles()
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectDir = Split-Path -Parent $scriptDir
@@ -29,12 +16,22 @@ $localhostUrl = "http://localhost:$port"
 $tailscaleDomain = "https://novel.tail356389.ts.net"
 $primaryUrl = $tailscaleDomain
 
-# Try to ensure Tailscale Serve is forwarding to port 5173
+# Ensure Tailscale Serve is forwarding to port 5173
 try {
     Start-Process -FilePath "tailscale" -ArgumentList "serve --bg $port" -WindowStyle Hidden -ErrorAction SilentlyContinue
 } catch {}
 
-# 2. Check if Vite/Node server is already running on port 5173
+# 2. Check if a Tray instance is already running
+$runningTray = Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction SilentlyContinue | Where-Object {
+    $_.CommandLine -like "*tray.ps1*" -and $_.ProcessId -ne $PID
+}
+if ($runningTray) {
+    # Tray is already running! Just open the browser and exit this duplicate script
+    Start-Process $primaryUrl
+    exit 0
+}
+
+# 3. Check if Vite/Node server is already running on port 5173
 $serverProcess = $null
 try {
     $existingConn = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -63,22 +60,40 @@ if (-not $serverProcess) {
     try {
         $serverProcess = [System.Diagnostics.Process]::Start($pinfo)
     } catch {
-        [System.Windows.Forms.MessageBox]::Show("Khong the khoi dong Vite server: " + $_.Exception.Message, "AudioEpub Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
-        exit 1
+        # Fallback using Start-Process
+        $serverProcess = Start-Process -FilePath $nodeExe -ArgumentList "`"$viteBin`"" -WorkingDirectory $projectDir -WindowStyle Hidden -PassThru
+    }
+    
+    # Wait up to 3 seconds for port 5173 to be ready
+    for ($i = 0; $i -lt 6; $i++) {
+        Start-Sleep -Milliseconds 500
+        $conn = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($conn) { break }
     }
 }
 
-# 3. Create Windows Forms Application Context & NotifyIcon
+# 4. Open the App in the user's default browser on startup!
+if (-not $NoOpenBrowser) {
+    try {
+        Start-Process $primaryUrl
+    } catch {
+        Start-Process $localhostUrl
+    }
+}
+
+# 5. Create Windows Forms Application Context & NotifyIcon
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+[System.Windows.Forms.Application]::EnableVisualStyles()
+
 $appContext = New-Object System.Windows.Forms.ApplicationContext
 $notifyIcon = New-Object System.Windows.Forms.NotifyIcon
 
-# Load Icon from public/favicon-48.png
-$iconFile = Join-Path $projectDir "public\favicon-48.png"
-if (Test-Path $iconFile) {
+# Load Icon from public/favicon.ico
+$icoFile = Join-Path $projectDir "public\favicon.ico"
+if (Test-Path $icoFile) {
     try {
-        $bmp = [System.Drawing.Bitmap]::FromFile($iconFile)
-        $hIcon = $bmp.GetHicon()
-        $notifyIcon.Icon = [System.Drawing.Icon]::FromHandle($hIcon)
+        $notifyIcon.Icon = New-Object System.Drawing.Icon($icoFile)
     } catch {
         $notifyIcon.Icon = [System.Drawing.SystemIcons]::Application
     }
@@ -88,7 +103,7 @@ if (Test-Path $iconFile) {
 
 $notifyIcon.Text = "AudioEpub (Port $port)"
 
-# 4. Create Context Menu (Right Click on Tray Icon)
+# 6. Create Context Menu (Right Click on Tray Icon)
 $contextMenu = New-Object System.Windows.Forms.ContextMenuStrip
 
 # Menu Item: Status
